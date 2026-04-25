@@ -4,8 +4,8 @@ const {
   Client,
   GatewayIntentBits,
   EmbedBuilder,
-  PermissionsBitField,
-  ActivityType
+  ActivityType,
+  PermissionsBitField
 } = require("discord.js");
 
 const axios = require("axios");
@@ -16,12 +16,12 @@ const BOT_COLOR = 0xff0000;
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const ERLC_SERVER_KEY = process.env.ERLC_SERVER_KEY;
+const STAFF_LOG_CHANNEL_ID = process.env.STAFF_LOG_CHANNEL_ID || "0";
+
 const STAFF_ALERT_USER_IDS = (process.env.STAFF_ALERT_USER_IDS || "")
   .split(",")
   .map(id => id.trim())
   .filter(Boolean);
-
-const STAFF_LOG_CHANNEL_ID = process.env.STAFF_LOG_CHANNEL_ID;
 
 const ERLC_BASE_URL = "https://api.policeroleplay.community/v1";
 
@@ -68,36 +68,23 @@ function nowISO() {
 }
 
 function daysOld(date) {
-  const diff = Date.now() - new Date(date).getTime();
-  return Math.floor(diff / 86400000);
+  return Math.floor((Date.now() - new Date(date).getTime()) / 86400000);
 }
 
 function similarity(a = "", b = "") {
-  a = a.toLowerCase();
-  b = b.toLowerCase();
+  a = String(a).toLowerCase();
+  b = String(b).toLowerCase();
 
-  const matrix = [];
+  if (!a || !b) return 0;
 
-  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+  let matches = 0;
+  const len = Math.min(a.length, b.length);
 
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
-      }
-    }
+  for (let i = 0; i < len; i++) {
+    if (a[i] === b[i]) matches++;
   }
 
-  const distance = matrix[b.length][a.length];
-  const maxLength = Math.max(a.length, b.length);
-  return maxLength === 0 ? 1 : 1 - distance / maxLength;
+  return matches / Math.max(a.length, b.length);
 }
 
 async function sendStaffAlert(title, description) {
@@ -108,8 +95,12 @@ async function sendStaffAlert(title, description) {
     .setTimestamp()
     .setFooter({ text: "AltDetector3000 • ER:LC + Discord Monitoring" });
 
-  const channel = await client.channels.fetch(STAFF_LOG_CHANNEL_ID).catch(() => null);
-  if (channel) await channel.send({ embeds: [embed] });
+  if (STAFF_LOG_CHANNEL_ID && STAFF_LOG_CHANNEL_ID !== "0") {
+    const channel = await client.channels.fetch(STAFF_LOG_CHANNEL_ID).catch(() => null);
+    if (channel) {
+      await channel.send({ embeds: [embed] }).catch(() => {});
+    }
+  }
 
   for (const id of STAFF_ALERT_USER_IDS) {
     const user = await client.users.fetch(id).catch(() => null);
@@ -119,7 +110,7 @@ async function sendStaffAlert(title, description) {
   }
 }
 
-function discordRiskScore(member) {
+function discordRisk(member) {
   let score = 0;
   const reasons = [];
 
@@ -133,15 +124,19 @@ function discordRiskScore(member) {
     reasons.push("Discord account is under 30 days old");
   }
 
-  const oldUsers = db.prepare("SELECT username, display_name FROM discord_users").all();
+  const oldUsers = db.prepare(`
+    SELECT username, display_name 
+    FROM discord_users
+    WHERE discord_id != ?
+  `).all(member.id);
 
   for (const old of oldUsers) {
     const nameMatch = Math.max(
-      similarity(member.user.username, old.username || ""),
-      similarity(member.displayName, old.display_name || "")
+      similarity(member.user.username, old.username),
+      similarity(member.displayName, old.display_name)
     );
 
-    if (nameMatch >= 0.82) {
+    if (nameMatch >= 0.85) {
       score += 20;
       reasons.push(`Similar name to previous member: ${old.username}`);
       break;
@@ -149,6 +144,109 @@ function discordRiskScore(member) {
   }
 
   return { score, reasons };
+}
+
+function robloxRisk(player) {
+  let score = 0;
+  const reasons = [];
+
+  const username = String(player.Player || "Unknown");
+  const robloxId = String(player.RobloxId || "");
+
+  const oldUsers = db.prepare(`
+    SELECT username 
+    FROM roblox_users
+    WHERE roblox_id != ?
+  `).all(robloxId);
+
+  for (const old of oldUsers) {
+    if (similarity(username, old.username) >= 0.85) {
+      score += 20;
+      reasons.push(`Similar Roblox username to previous player: ${old.username}`);
+      break;
+    }
+  }
+
+  const linked = db.prepare(`
+    SELECT discord_id 
+    FROM linked_accounts
+    WHERE roblox_id = ?
+  `).get(robloxId);
+
+  if (!linked) {
+    score += 15;
+    reasons.push("Roblox account is not linked to a Discord member");
+  }
+
+  return { score, reasons };
+}
+
+async function fetchERLCPlayers() {
+  if (!ERLC_SERVER_KEY) return [];
+
+  try {
+    const response = await axios.get(`${ERLC_BASE_URL}/server/players`, {
+      headers: {
+        "Server-Key": ERLC_SERVER_KEY
+      }
+    });
+
+    return Array.isArray(response.data) ? response.data : [];
+  } catch (error) {
+    console.log("ERLC API error:", error.response?.status || error.message);
+    return [];
+  }
+}
+
+async function trackERLCPlayers() {
+  const players = await fetchERLCPlayers();
+
+  for (const player of players) {
+    const username = String(player.Player || "Unknown");
+    const robloxId = String(player.RobloxId || "");
+
+    if (!robloxId || robloxId === "undefined") continue;
+
+    const existing = db.prepare(`
+      SELECT first_seen 
+      FROM roblox_users 
+      WHERE roblox_id = ?
+    `).get(robloxId);
+
+    db.prepare(`
+      INSERT INTO roblox_users
+      (roblox_id, username, first_seen, last_seen)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(roblox_id) DO UPDATE SET
+      username = excluded.username,
+      last_seen = excluded.last_seen
+    `).run(
+      robloxId,
+      username,
+      existing?.first_seen || nowISO(),
+      nowISO()
+    );
+
+    const { score, reasons } = robloxRisk(player);
+
+    if (score >= 30) {
+      await sendStaffAlert(
+        "Suspected Roblox Alt Detected",
+        `
+Username: \`${username}\`
+Roblox UserId: \`${robloxId}\`
+
+Risk Score: \`${score}\`
+
+Reasons:
+${reasons.map(r => `- ${r}`).join("\n") || "- No listed reasons"}
+
+Recommended Action:
+Manual review.
+`
+      );
+    }
+  }
 }
 
 client.once("ready", () => {
@@ -164,16 +262,17 @@ client.once("ready", () => {
     status: "online"
   });
 
+  trackERLCPlayers();
   setInterval(trackERLCPlayers, 60000);
 });
 
 client.on("guildMemberAdd", async member => {
-  const { score, reasons } = discordRiskScore(member);
+  const { score, reasons } = discordRisk(member);
 
   db.prepare(`
     INSERT OR REPLACE INTO discord_users
-    (discord_id, username, display_name, created_at, joined_at, left_at)
-    VALUES (?, ?, ?, ?, ?, NULL)
+    (discord_id, username, display_name, created_at, joined_at, left_at, flags)
+    VALUES (?, ?, ?, ?, ?, NULL, '')
   `).run(
     member.id,
     member.user.username,
@@ -195,7 +294,7 @@ Account Created: \`${member.user.createdAt.toISOString()}\`
 Risk Score: \`${score}\`
 
 Reasons:
-${reasons.map(r => `- ${r}`).join("\n")}
+${reasons.map(r => `- ${r}`).join("\n") || "- No listed reasons"}
 
 Recommended Action:
 Manual review.
@@ -212,99 +311,13 @@ client.on("guildMemberRemove", member => {
   `).run(nowISO(), member.id);
 });
 
-async function fetchERLCPlayers() {
-  try {
-    const response = await axios.get(`${ERLC_BASE_URL}/server/players`, {
-      headers: {
-        "Server-Key": ERLC_SERVER_KEY
-      }
-    });
-
-    return response.data || [];
-  } catch (error) {
-    console.error("ERLC API Error:", error.response?.status, error.response?.data || error.message);
-    return [];
-  }
-}
-
-function robloxRiskScore(player) {
-  let score = 0;
-  const reasons = [];
-
-  const username = String(player.Player || "Unknown");
-  const robloxId = String(player.RobloxId || "");
-
-  const previous = db.prepare("SELECT username FROM roblox_users").all();
-
-  for (const old of previous) {
-    if (old.username && similarity(username, old.username) >= 0.82) {
-      score += 20;
-      reasons.push(`Similar Roblox username to previous player: ${old.username}`);
-      break;
-    }
-  }
-
-  const linked = db.prepare(`
-    SELECT discord_id FROM linked_accounts
-    WHERE roblox_id = ?
-  `).get(robloxId);
-
-  if (!linked) {
-    score += 15;
-    reasons.push("Roblox account is not linked to a Discord member");
-  }
-
-  return { score, reasons };
-}
-
-async function trackERLCPlayers() {
-  const players = await fetchERLCPlayers();
-
-  for (const player of players) {
-    const username = String(player.Player || "Unknown");
-    const robloxId = String(player.RobloxId || "");
-
-    if (!robloxId) continue;
-
-    db.prepare(`
-      INSERT INTO roblox_users
-      (roblox_id, username, first_seen, last_seen)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(roblox_id) DO UPDATE SET
-      username = excluded.username,
-      last_seen = excluded.last_seen
-    `).run(robloxId, username, nowISO(), nowISO());
-
-    const { score, reasons } = robloxRiskScore(player);
-
-    if (score >= 30) {
-      await sendStaffAlert(
-        "Suspected Roblox Alt Detected",
-        `
-Username: \`${username}\`
-Roblox UserId: \`${robloxId}\`
-
-Risk Score: \`${score}\`
-
-Reasons:
-${reasons.map(r => `- ${r}`).join("\n")}
-
-Recommended Action:
-Manual review.
-`
-      );
-    }
-  }
-}
-
 client.on("messageCreate", async message => {
   if (message.author.bot || !message.content.startsWith("!")) return;
 
   const args = message.content.slice(1).trim().split(/ +/);
   const command = args.shift()?.toLowerCase();
 
-  const member = message.member;
-  const canManage = member.permissions.has(PermissionsBitField.Flags.ManageGuild);
+  const canManage = message.member?.permissions.has(PermissionsBitField.Flags.ManageGuild);
 
   if (command === "ping") {
     return message.reply(`🏓 ${BOT_NAME} online. Ping: \`${client.ws.ping}ms\``);
@@ -316,7 +329,7 @@ client.on("messageCreate", async message => {
     const target = message.mentions.members.first();
     if (!target) return message.reply("Use: `!altcheck @user`");
 
-    const { score, reasons } = discordRiskScore(target);
+    const { score, reasons } = discordRisk(target);
 
     return message.reply(`
 **Alt Check for ${target}**
@@ -371,6 +384,75 @@ Flags: \`${row.flags || "None"}\`
     `).run(target.id, robloxId, robloxUsername);
 
     return message.reply(`Linked ${target} to Roblox \`${robloxUsername}\` / \`${robloxId}\`.`);
+  }
+
+  if (command === "flagdiscord") {
+    if (!canManage) return message.reply("You need Manage Server permission.");
+
+    const target = message.mentions.members.first();
+    const reason = args.slice(1).join(" ");
+
+    if (!target || !reason) {
+      return message.reply("Use: `!flagdiscord @user reason`");
+    }
+
+    db.prepare(`
+      INSERT OR IGNORE INTO discord_users
+      (discord_id, username, display_name, created_at, joined_at, left_at, flags)
+      VALUES (?, ?, ?, ?, ?, NULL, '')
+    `).run(
+      target.id,
+      target.user.username,
+      target.displayName,
+      target.user.createdAt.toISOString(),
+      nowISO()
+    );
+
+    db.prepare(`
+      UPDATE discord_users
+      SET flags = flags || ?
+      WHERE discord_id = ?
+    `).run(`\n${reason}`, target.id);
+
+    return message.reply(`Flagged ${target}: \`${reason}\``);
+  }
+
+  if (command === "flagroblox") {
+    if (!canManage) return message.reply("You need Manage Server permission.");
+
+    const robloxId = args[0];
+    const reason = args.slice(1).join(" ");
+
+    if (!robloxId || !reason) {
+      return message.reply("Use: `!flagroblox ROBLOX_USER_ID reason`");
+    }
+
+    db.prepare(`
+      INSERT OR IGNORE INTO roblox_users
+      (roblox_id, username, first_seen, last_seen, flags)
+      VALUES (?, 'Unknown', ?, ?, '')
+    `).run(robloxId, nowISO(), nowISO());
+
+    db.prepare(`
+      UPDATE roblox_users
+      SET flags = flags || ?
+      WHERE roblox_id = ?
+    `).run(`\n${reason}`, robloxId);
+
+    return message.reply(`Flagged Roblox \`${robloxId}\`: \`${reason}\``);
+  }
+
+  if (command === "help") {
+    return message.reply(`
+**${BOT_NAME} Commands**
+
+\`!ping\` - Check if the bot is online
+\`!altcheck @user\` - Check a Discord member
+\`!robloxcheck ROBLOX_USER_ID\` - Check Roblox history
+\`!link @user ROBLOX_USER_ID ROBLOX_USERNAME\` - Link Discord to Roblox
+\`!flagdiscord @user reason\` - Add a flag to Discord user
+\`!flagroblox ROBLOX_USER_ID reason\` - Add a flag to Roblox user
+`);
   }
 });
 
