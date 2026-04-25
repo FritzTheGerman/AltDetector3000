@@ -4,7 +4,10 @@ const {
   Client,
   GatewayIntentBits,
   EmbedBuilder,
-  ActivityType
+  ActivityType,
+  SlashCommandBuilder,
+  REST,
+  Routes
 } = require("discord.js");
 
 const axios = require("axios");
@@ -14,9 +17,10 @@ const BOT_NAME = "AltDetector3000";
 const BOT_COLOR = 0xff0000;
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
 const ERLC_SERVER_KEY = process.env.ERLC_SERVER_KEY;
-const STAFF_LOG_CHANNEL_ID = process.env.STAFF_LOG_CHANNEL_ID || "0";
 const DATABASE_URL = process.env.DATABASE_URL;
+const STAFF_LOG_CHANNEL_ID = process.env.STAFF_LOG_CHANNEL_ID || "0";
 
 const STAFF_ALERT_USER_IDS = (process.env.STAFF_ALERT_USER_IDS || "")
   .split(",")
@@ -25,23 +29,19 @@ const STAFF_ALERT_USER_IDS = (process.env.STAFF_ALERT_USER_IDS || "")
 
 const ERLC_BASE_URL = "https://api.policeroleplay.community/v1";
 
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  }
-});
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.GuildMembers
   ]
 });
 
-function isAlertStaff(userId) {
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
+
+function isStaff(userId) {
   return STAFF_ALERT_USER_IDS.includes(String(userId));
 }
 
@@ -50,6 +50,7 @@ function nowISO() {
 }
 
 function daysOld(date) {
+  if (!date) return 9999;
   return Math.floor((Date.now() - new Date(date).getTime()) / 86400000);
 }
 
@@ -59,14 +60,28 @@ function similarity(a = "", b = "") {
 
   if (!a || !b) return 0;
 
-  let matches = 0;
-  const len = Math.min(a.length, b.length);
+  const matrix = [];
 
-  for (let i = 0; i < len; i++) {
-    if (a[i] === b[i]) matches++;
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
   }
 
-  return matches / Math.max(a.length, b.length);
+  const distance = matrix[b.length][a.length];
+  const maxLength = Math.max(a.length, b.length);
+  return maxLength === 0 ? 1 : 1 - distance / maxLength;
 }
 
 async function setupDatabase() {
@@ -123,10 +138,7 @@ async function sendStaffAlert(title, description) {
 
 async function sendAlertToOneUser(userId, title, description) {
   const user = await client.users.fetch(userId).catch(() => null);
-
-  if (!user) {
-    return false;
-  }
+  if (!user) return false;
 
   const embed = new EmbedBuilder()
     .setTitle(`${BOT_NAME} Alert`)
@@ -163,7 +175,7 @@ async function discordRisk(member) {
   }
 
   const oldUsers = await pool.query(
-    `SELECT username, display_name FROM discord_users WHERE discord_id != $1`,
+    `SELECT username, display_name, left_at, flags FROM discord_users WHERE discord_id != $1`,
     [member.id]
   );
 
@@ -233,9 +245,7 @@ async function fetchERLCPlayers() {
 
   try {
     const response = await axios.get(`${ERLC_BASE_URL}/server/players`, {
-      headers: {
-        "Server-Key": ERLC_SERVER_KEY
-      }
+      headers: { "Server-Key": ERLC_SERVER_KEY }
     });
 
     return Array.isArray(response.data) ? response.data : [];
@@ -256,6 +266,11 @@ async function trackERLCPlayers() {
 
     const robloxInfo = await getRobloxUserInfo(robloxId);
 
+    const existing = await pool.query(
+      `SELECT first_seen, last_alerted_at FROM roblox_users WHERE roblox_id = $1`,
+      [robloxId]
+    );
+
     await pool.query(
       `
       INSERT INTO roblox_users
@@ -272,17 +287,12 @@ async function trackERLCPlayers() {
         username,
         robloxInfo?.displayName || null,
         robloxInfo?.created || null,
-        nowISO(),
+        existing.rows[0]?.first_seen || nowISO(),
         nowISO()
       ]
     );
 
     const { score, reasons } = await robloxRisk(player, robloxInfo);
-
-    const existing = await pool.query(
-      `SELECT last_alerted_at FROM roblox_users WHERE roblox_id = $1`,
-      [robloxId]
-    );
 
     const lastAlerted = existing.rows[0]?.last_alerted_at;
     const canAlertAgain = !lastAlerted || daysOld(lastAlerted) >= 1;
@@ -313,17 +323,124 @@ Manual review.
   }
 }
 
+async function registerSlashCommands() {
+  const commands = [
+    new SlashCommandBuilder()
+      .setName("ping")
+      .setDescription("Check if AltDetector3000 is online"),
+
+    new SlashCommandBuilder()
+      .setName("help")
+      .setDescription("Show AltDetector3000 commands"),
+
+    new SlashCommandBuilder()
+      .setName("testalert")
+      .setDescription("Send a test DM alert")
+      .addUserOption(option =>
+        option
+          .setName("user")
+          .setDescription("Optional: test DM one specific user")
+          .setRequired(false)
+      ),
+
+    new SlashCommandBuilder()
+      .setName("alerts")
+      .setDescription("List staff alert users"),
+
+    new SlashCommandBuilder()
+      .setName("altcheck")
+      .setDescription("Check a Discord member for alt risk")
+      .addUserOption(option =>
+        option
+          .setName("user")
+          .setDescription("Discord user to check")
+          .setRequired(true)
+      ),
+
+    new SlashCommandBuilder()
+      .setName("robloxcheck")
+      .setDescription("Check a Roblox user by UserId")
+      .addStringOption(option =>
+        option
+          .setName("roblox_id")
+          .setDescription("Roblox UserId")
+          .setRequired(true)
+      ),
+
+    new SlashCommandBuilder()
+      .setName("link")
+      .setDescription("Link a Discord user to a Roblox account")
+      .addUserOption(option =>
+        option
+          .setName("user")
+          .setDescription("Discord user")
+          .setRequired(true)
+      )
+      .addStringOption(option =>
+        option
+          .setName("roblox_id")
+          .setDescription("Roblox UserId")
+          .setRequired(true)
+      )
+      .addStringOption(option =>
+        option
+          .setName("roblox_username")
+          .setDescription("Roblox username")
+          .setRequired(true)
+      ),
+
+    new SlashCommandBuilder()
+      .setName("flagdiscord")
+      .setDescription("Add a staff flag to a Discord user")
+      .addUserOption(option =>
+        option
+          .setName("user")
+          .setDescription("Discord user")
+          .setRequired(true)
+      )
+      .addStringOption(option =>
+        option
+          .setName("reason")
+          .setDescription("Flag reason")
+          .setRequired(true)
+      ),
+
+    new SlashCommandBuilder()
+      .setName("flagroblox")
+      .setDescription("Add a staff flag to a Roblox user")
+      .addStringOption(option =>
+        option
+          .setName("roblox_id")
+          .setDescription("Roblox UserId")
+          .setRequired(true)
+      )
+      .addStringOption(option =>
+        option
+          .setName("reason")
+          .setDescription("Flag reason")
+          .setRequired(true)
+      )
+  ].map(command => command.toJSON());
+
+  const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
+
+  await rest.put(
+    Routes.applicationCommands(CLIENT_ID),
+    { body: commands }
+  );
+
+  console.log("Slash commands registered.");
+}
+
 client.once("ready", async () => {
   await setupDatabase();
+  await registerSlashCommands();
 
   console.log(`${BOT_NAME} logged in as ${client.user.tag}`);
 
   client.user.setPresence({
     activities: [
-      {
-        name: "ER:LC + Discord for alts",
-        type: ActivityType.Watching
-      }
+      { name: "ER:LC + Discord for alts", type: ActivityType.Watching }
     ],
     status: "online"
   });
@@ -389,41 +506,47 @@ client.on("guildMemberRemove", async member => {
   );
 });
 
-client.on("messageCreate", async message => {
-  if (message.author.bot || !message.content.startsWith("!")) return;
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isChatInputCommand()) return;
 
-  const args = message.content.slice(1).trim().split(/ +/);
-  const command = args.shift()?.toLowerCase();
-
-  const allowed = isAlertStaff(message.author.id);
-
-  if (!allowed) {
-    return message.reply("You are not authorized to use AltDetector3000 commands.");
+  if (!isStaff(interaction.user.id)) {
+    return interaction.reply({
+      content: "You are not authorized to use AltDetector3000 commands.",
+      ephemeral: true
+    });
   }
 
+  const command = interaction.commandName;
+
   if (command === "ping") {
-    return message.reply(`🏓 ${BOT_NAME} online. Ping: \`${client.ws.ping}ms\``);
+    return interaction.reply({
+      content: `🏓 ${BOT_NAME} online. Ping: \`${client.ws.ping}ms\``,
+      ephemeral: true
+    });
   }
 
   if (command === "help") {
-    return message.reply(`
+    return interaction.reply({
+      content: `
 **${BOT_NAME} Commands**
 
-\`!ping\` - Check if the bot is online
-\`!help\` - Show this command list
-\`!testalert\` - DM all staff a test alert
-\`!testalert @user\` - DM one specific user a test alert
-\`!alerts list\` - Show who receives alerts
-\`!altcheck @user\` - Check a Discord member
-\`!robloxcheck ROBLOX_USER_ID\` - Check Roblox history
-\`!link @user ROBLOX_USER_ID ROBLOX_USERNAME\` - Link Discord to Roblox
-\`!flagdiscord @user reason\` - Add a flag to Discord user
-\`!flagroblox ROBLOX_USER_ID reason\` - Add a flag to Roblox user
-`);
+\`/ping\` - Check if the bot is online
+\`/help\` - Show this command list
+\`/testalert\` - DM all staff a test alert
+\`/testalert user:@user\` - DM one specific user a test alert
+\`/alerts\` - Show who receives alerts
+\`/altcheck user:@user\` - Check a Discord member
+\`/robloxcheck roblox_id:123\` - Check Roblox history and account age
+\`/link user:@user roblox_id:123 roblox_username:Name\` - Link Discord to Roblox
+\`/flagdiscord user:@user reason:text\` - Add a flag to Discord user
+\`/flagroblox roblox_id:123 reason:text\` - Add a flag to Roblox user
+`,
+      ephemeral: true
+    });
   }
 
   if (command === "testalert") {
-    const target = message.mentions.users.first();
+    const target = interaction.options.getUser("user");
 
     if (target) {
       const sent = await sendAlertToOneUser(
@@ -432,7 +555,7 @@ client.on("messageCreate", async message => {
         `
 This is a direct test alert from AltDetector3000.
 
-Triggered by: ${message.author}
+Triggered by: ${interaction.user}
 Sent to: ${target}
 Time: ${new Date().toISOString()}
 
@@ -440,11 +563,12 @@ If this DM was received, direct test alerts are working.
 `
       );
 
-      if (!sent) {
-        return message.reply("❌ Could not send the test alert to that user.");
-      }
-
-      return message.reply(`✅ Test alert sent to ${target}.`);
+      return interaction.reply({
+        content: sent
+          ? `✅ Test alert sent to ${target}.`
+          : "❌ Could not send the test alert to that user.",
+        ephemeral: true
+      });
     }
 
     await sendStaffAlert(
@@ -452,66 +576,74 @@ If this DM was received, direct test alerts are working.
       `
 This is a test alert from AltDetector3000.
 
-Triggered by: ${message.author}
+Triggered by: ${interaction.user}
 Time: ${new Date().toISOString()}
 
 If you see this, staff DM alerts are working correctly.
 `
     );
 
-    return message.reply("✅ Test alert sent to all staff.");
+    return interaction.reply({
+      content: "✅ Test alert sent to all staff.",
+      ephemeral: true
+    });
   }
 
   if (command === "alerts") {
-    const subcommand = args[0]?.toLowerCase();
-
-    if (subcommand !== "list") {
-      return message.reply("Use: `!alerts list`");
-    }
-
     if (STAFF_ALERT_USER_IDS.length === 0) {
-      return message.reply("No staff alert users are set in `STAFF_ALERT_USER_IDS`.");
+      return interaction.reply({
+        content: "No staff alert users are set in `STAFF_ALERT_USER_IDS`.",
+        ephemeral: true
+      });
     }
 
     const lines = [];
 
     for (const id of STAFF_ALERT_USER_IDS) {
       const user = await client.users.fetch(id).catch(() => null);
-
-      if (user) {
-        lines.push(`- ${user.tag} / \`${id}\``);
-      } else {
-        lines.push(`- Unknown User / \`${id}\``);
-      }
+      lines.push(user ? `- ${user.tag} / \`${id}\`` : `- Unknown User / \`${id}\``);
     }
 
-    return message.reply(`
-**AltDetector3000 Alert Staff**
-
-${lines.join("\n")}
-`);
+    return interaction.reply({
+      content: `**AltDetector3000 Alert Staff**\n\n${lines.join("\n")}`,
+      ephemeral: true
+    });
   }
 
   if (command === "altcheck") {
-    const target = message.mentions.members.first();
-    if (!target) return message.reply("Use: `!altcheck @user`");
+    const user = interaction.options.getUser("user");
+    const member = await interaction.guild.members.fetch(user.id).catch(() => null);
 
-    const { score, reasons } = await discordRisk(target);
+    if (!member) {
+      return interaction.reply({
+        content: "Could not find that member in this server.",
+        ephemeral: true
+      });
+    }
 
-    return message.reply(`
-**Alt Check for ${target}**
+    const { score, reasons } = await discordRisk(member);
+
+    return interaction.reply({
+      content: `
+**Alt Check for ${member}**
+
+Discord ID: \`${member.id}\`
+Username: \`${member.user.username}\`
+Display Name: \`${member.displayName}\`
+Account Created: \`${member.user.createdAt.toISOString()}\`
+Discord Age: \`${daysOld(member.user.createdAt)} days\`
 
 Risk Score: \`${score}\`
 
 Reasons:
 ${reasons.length ? reasons.map(r => `- ${r}`).join("\n") : "- No major risk found"}
-`);
+`,
+      ephemeral: true
+    });
   }
 
   if (command === "robloxcheck") {
-    const robloxId = args[0];
-    if (!robloxId) return message.reply("Use: `!robloxcheck ROBLOX_USER_ID`");
-
+    const robloxId = interaction.options.getString("roblox_id");
     const robloxInfo = await getRobloxUserInfo(robloxId);
 
     const row = await pool.query(
@@ -524,12 +656,16 @@ ${reasons.length ? reasons.map(r => `- ${r}`).join("\n") : "- No major risk foun
     );
 
     if (row.rows.length === 0 && !robloxInfo) {
-      return message.reply("No Roblox history found and Roblox API lookup failed.");
+      return interaction.reply({
+        content: "No Roblox history found and Roblox API lookup failed.",
+        ephemeral: true
+      });
     }
 
     const dbUser = row.rows[0];
 
-    return message.reply(`
+    return interaction.reply({
+      content: `
 **Roblox Check**
 
 Username: \`${dbUser?.username || robloxInfo?.name || "Unknown"}\`
@@ -540,17 +676,15 @@ Roblox Age: \`${robloxInfo?.created ? daysOld(robloxInfo.created) + " days" : "U
 First Seen In ER:LC: \`${dbUser?.first_seen || "Not seen yet"}\`
 Last Seen In ER:LC: \`${dbUser?.last_seen || "Not seen yet"}\`
 Flags: \`${dbUser?.flags || "None"}\`
-`);
+`,
+      ephemeral: true
+    });
   }
 
   if (command === "link") {
-    const target = message.mentions.members.first();
-    const robloxId = args[1];
-    const robloxUsername = args[2];
-
-    if (!target || !robloxId || !robloxUsername) {
-      return message.reply("Use: `!link @user ROBLOX_USER_ID ROBLOX_USERNAME`");
-    }
+    const user = interaction.options.getUser("user");
+    const robloxId = interaction.options.getString("roblox_id");
+    const robloxUsername = interaction.options.getString("roblox_username");
 
     await pool.query(
       `
@@ -560,19 +694,19 @@ Flags: \`${dbUser?.flags || "None"}\`
       ON CONFLICT (discord_id, roblox_id) DO UPDATE SET
         roblox_username = EXCLUDED.roblox_username
       `,
-      [target.id, robloxId, robloxUsername]
+      [user.id, robloxId, robloxUsername]
     );
 
-    return message.reply(`Linked ${target} to Roblox \`${robloxUsername}\` / \`${robloxId}\`.`);
+    return interaction.reply({
+      content: `Linked ${user} to Roblox \`${robloxUsername}\` / \`${robloxId}\`.`,
+      ephemeral: true
+    });
   }
 
   if (command === "flagdiscord") {
-    const target = message.mentions.members.first();
-    const reason = args.slice(1).join(" ");
-
-    if (!target || !reason) {
-      return message.reply("Use: `!flagdiscord @user reason`");
-    }
+    const user = interaction.options.getUser("user");
+    const reason = interaction.options.getString("reason");
+    const member = await interaction.guild.members.fetch(user.id).catch(() => null);
 
     await pool.query(
       `
@@ -582,10 +716,10 @@ Flags: \`${dbUser?.flags || "None"}\`
       ON CONFLICT (discord_id) DO NOTHING
       `,
       [
-        target.id,
-        target.user.username,
-        target.displayName,
-        target.user.createdAt.toISOString(),
+        user.id,
+        user.username,
+        member?.displayName || user.username,
+        user.createdAt.toISOString(),
         nowISO()
       ]
     );
@@ -596,20 +730,18 @@ Flags: \`${dbUser?.flags || "None"}\`
       SET flags = COALESCE(flags, '') || $1
       WHERE discord_id = $2
       `,
-      [`\n${reason}`, target.id]
+      [`\n${reason}`, user.id]
     );
 
-    return message.reply(`Flagged ${target}: \`${reason}\``);
+    return interaction.reply({
+      content: `Flagged ${user}: \`${reason}\``,
+      ephemeral: true
+    });
   }
 
   if (command === "flagroblox") {
-    const robloxId = args[0];
-    const reason = args.slice(1).join(" ");
-
-    if (!robloxId || !reason) {
-      return message.reply("Use: `!flagroblox ROBLOX_USER_ID reason`");
-    }
-
+    const robloxId = interaction.options.getString("roblox_id");
+    const reason = interaction.options.getString("reason");
     const robloxInfo = await getRobloxUserInfo(robloxId);
 
     await pool.query(
@@ -638,7 +770,10 @@ Flags: \`${dbUser?.flags || "None"}\`
       [`\n${reason}`, robloxId]
     );
 
-    return message.reply(`Flagged Roblox \`${robloxId}\`: \`${reason}\``);
+    return interaction.reply({
+      content: `Flagged Roblox \`${robloxId}\`: \`${reason}\``,
+      ephemeral: true
+    });
   }
 });
 
