@@ -8,7 +8,7 @@ const {
 } = require("discord.js");
 
 const axios = require("axios");
-const Database = require("better-sqlite3");
+const { Pool } = require("pg");
 
 const BOT_NAME = "AltDetector3000";
 const BOT_COLOR = 0xff0000;
@@ -16,6 +16,7 @@ const BOT_COLOR = 0xff0000;
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const ERLC_SERVER_KEY = process.env.ERLC_SERVER_KEY;
 const STAFF_LOG_CHANNEL_ID = process.env.STAFF_LOG_CHANNEL_ID || "0";
+const DATABASE_URL = process.env.DATABASE_URL;
 
 const STAFF_ALERT_USER_IDS = (process.env.STAFF_ALERT_USER_IDS || "")
   .split(",")
@@ -24,34 +25,12 @@ const STAFF_ALERT_USER_IDS = (process.env.STAFF_ALERT_USER_IDS || "")
 
 const ERLC_BASE_URL = "https://api.policeroleplay.community/v1";
 
-const db = new Database("alt_tracker.db");
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS discord_users (
-  discord_id TEXT PRIMARY KEY,
-  username TEXT,
-  display_name TEXT,
-  created_at TEXT,
-  joined_at TEXT,
-  left_at TEXT,
-  flags TEXT DEFAULT ''
-);
-
-CREATE TABLE IF NOT EXISTS roblox_users (
-  roblox_id TEXT PRIMARY KEY,
-  username TEXT,
-  first_seen TEXT,
-  last_seen TEXT,
-  flags TEXT DEFAULT ''
-);
-
-CREATE TABLE IF NOT EXISTS linked_accounts (
-  discord_id TEXT,
-  roblox_id TEXT,
-  roblox_username TEXT,
-  PRIMARY KEY(discord_id, roblox_id)
-);
-`);
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
 
 const client = new Client({
   intents: [
@@ -90,6 +69,39 @@ function similarity(a = "", b = "") {
   return matches / Math.max(a.length, b.length);
 }
 
+async function setupDatabase() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS discord_users (
+      discord_id TEXT PRIMARY KEY,
+      username TEXT,
+      display_name TEXT,
+      created_at TIMESTAMPTZ,
+      joined_at TIMESTAMPTZ,
+      left_at TIMESTAMPTZ,
+      flags TEXT DEFAULT '',
+      last_alerted_at TIMESTAMPTZ
+    );
+
+    CREATE TABLE IF NOT EXISTS roblox_users (
+      roblox_id TEXT PRIMARY KEY,
+      username TEXT,
+      display_name TEXT,
+      roblox_created_at TIMESTAMPTZ,
+      first_seen TIMESTAMPTZ,
+      last_seen TIMESTAMPTZ,
+      flags TEXT DEFAULT '',
+      last_alerted_at TIMESTAMPTZ
+    );
+
+    CREATE TABLE IF NOT EXISTS linked_accounts (
+      discord_id TEXT,
+      roblox_id TEXT,
+      roblox_username TEXT,
+      PRIMARY KEY(discord_id, roblox_id)
+    );
+  `);
+}
+
 async function sendStaffAlert(title, description) {
   const embed = new EmbedBuilder()
     .setTitle(`${BOT_NAME} Alert`)
@@ -100,20 +112,25 @@ async function sendStaffAlert(title, description) {
 
   if (STAFF_LOG_CHANNEL_ID && STAFF_LOG_CHANNEL_ID !== "0") {
     const channel = await client.channels.fetch(STAFF_LOG_CHANNEL_ID).catch(() => null);
-    if (channel) {
-      await channel.send({ embeds: [embed] }).catch(() => {});
-    }
+    if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
   }
 
   for (const id of STAFF_ALERT_USER_IDS) {
     const user = await client.users.fetch(id).catch(() => null);
-    if (user) {
-      await user.send({ embeds: [embed] }).catch(() => {});
-    }
+    if (user) await user.send({ embeds: [embed] }).catch(() => {});
   }
 }
 
-function discordRisk(member) {
+async function getRobloxUserInfo(robloxId) {
+  try {
+    const response = await axios.get(`https://users.roblox.com/v1/users/${robloxId}`);
+    return response.data;
+  } catch {
+    return null;
+  }
+}
+
+async function discordRisk(member) {
   let score = 0;
   const reasons = [];
 
@@ -127,13 +144,12 @@ function discordRisk(member) {
     reasons.push("Discord account is under 30 days old");
   }
 
-  const oldUsers = db.prepare(`
-    SELECT username, display_name 
-    FROM discord_users
-    WHERE discord_id != ?
-  `).all(member.id);
+  const oldUsers = await pool.query(
+    `SELECT username, display_name FROM discord_users WHERE discord_id != $1`,
+    [member.id]
+  );
 
-  for (const old of oldUsers) {
+  for (const old of oldUsers.rows) {
     const nameMatch = Math.max(
       similarity(member.user.username, old.username),
       similarity(member.displayName, old.display_name)
@@ -149,20 +165,31 @@ function discordRisk(member) {
   return { score, reasons };
 }
 
-function robloxRisk(player) {
+async function robloxRisk(player, robloxInfo) {
   let score = 0;
   const reasons = [];
 
   const username = String(player.Player || "Unknown");
   const robloxId = String(player.RobloxId || "");
 
-  const oldUsers = db.prepare(`
-    SELECT username 
-    FROM roblox_users
-    WHERE roblox_id != ?
-  `).all(robloxId);
+  if (robloxInfo?.created) {
+    const robloxAge = daysOld(robloxInfo.created);
 
-  for (const old of oldUsers) {
+    if (robloxAge <= 7) {
+      score += 40;
+      reasons.push("Roblox account is under 7 days old");
+    } else if (robloxAge <= 30) {
+      score += 25;
+      reasons.push("Roblox account is under 30 days old");
+    }
+  }
+
+  const oldUsers = await pool.query(
+    `SELECT username FROM roblox_users WHERE roblox_id != $1`,
+    [robloxId]
+  );
+
+  for (const old of oldUsers.rows) {
     if (similarity(username, old.username) >= 0.85) {
       score += 20;
       reasons.push(`Similar Roblox username to previous player: ${old.username}`);
@@ -170,13 +197,12 @@ function robloxRisk(player) {
     }
   }
 
-  const linked = db.prepare(`
-    SELECT discord_id 
-    FROM linked_accounts
-    WHERE roblox_id = ?
-  `).get(robloxId);
+  const linked = await pool.query(
+    `SELECT discord_id FROM linked_accounts WHERE roblox_id = $1`,
+    [robloxId]
+  );
 
-  if (!linked) {
+  if (linked.rows.length === 0) {
     score += 15;
     reasons.push("Roblox account is not linked to a Discord member");
   }
@@ -210,34 +236,46 @@ async function trackERLCPlayers() {
 
     if (!robloxId || robloxId === "undefined") continue;
 
-    const existing = db.prepare(`
-      SELECT first_seen 
-      FROM roblox_users 
-      WHERE roblox_id = ?
-    `).get(robloxId);
+    const robloxInfo = await getRobloxUserInfo(robloxId);
 
-    db.prepare(`
+    await pool.query(
+      `
       INSERT INTO roblox_users
-      (roblox_id, username, first_seen, last_seen)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(roblox_id) DO UPDATE SET
-      username = excluded.username,
-      last_seen = excluded.last_seen
-    `).run(
-      robloxId,
-      username,
-      existing?.first_seen || nowISO(),
-      nowISO()
+      (roblox_id, username, display_name, roblox_created_at, first_seen, last_seen)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (roblox_id) DO UPDATE SET
+        username = EXCLUDED.username,
+        display_name = EXCLUDED.display_name,
+        roblox_created_at = EXCLUDED.roblox_created_at,
+        last_seen = EXCLUDED.last_seen
+      `,
+      [
+        robloxId,
+        username,
+        robloxInfo?.displayName || null,
+        robloxInfo?.created || null,
+        nowISO(),
+        nowISO()
+      ]
     );
 
-    const { score, reasons } = robloxRisk(player);
+    const { score, reasons } = await robloxRisk(player, robloxInfo);
 
-    if (score >= 30) {
+    const existing = await pool.query(
+      `SELECT last_alerted_at FROM roblox_users WHERE roblox_id = $1`,
+      [robloxId]
+    );
+
+    const lastAlerted = existing.rows[0]?.last_alerted_at;
+    const canAlertAgain = !lastAlerted || daysOld(lastAlerted) >= 1;
+
+    if (score >= 45 && canAlertAgain) {
       await sendStaffAlert(
         "Suspected Roblox Alt Detected",
         `
 Username: \`${username}\`
 Roblox UserId: \`${robloxId}\`
+Roblox Created: \`${robloxInfo?.created || "Unknown"}\`
 
 Risk Score: \`${score}\`
 
@@ -248,11 +286,18 @@ Recommended Action:
 Manual review.
 `
       );
+
+      await pool.query(
+        `UPDATE roblox_users SET last_alerted_at = $1 WHERE roblox_id = $2`,
+        [nowISO(), robloxId]
+      );
     }
   }
 }
 
-client.once("ready", () => {
+client.once("ready", async () => {
+  await setupDatabase();
+
   console.log(`${BOT_NAME} logged in as ${client.user.tag}`);
 
   client.user.setPresence({
@@ -270,18 +315,26 @@ client.once("ready", () => {
 });
 
 client.on("guildMemberAdd", async member => {
-  const { score, reasons } = discordRisk(member);
+  const { score, reasons } = await discordRisk(member);
 
-  db.prepare(`
-    INSERT OR REPLACE INTO discord_users
+  await pool.query(
+    `
+    INSERT INTO discord_users
     (discord_id, username, display_name, created_at, joined_at, left_at, flags)
-    VALUES (?, ?, ?, ?, ?, NULL, '')
-  `).run(
-    member.id,
-    member.user.username,
-    member.displayName,
-    member.user.createdAt.toISOString(),
-    nowISO()
+    VALUES ($1, $2, $3, $4, $5, NULL, '')
+    ON CONFLICT (discord_id) DO UPDATE SET
+      username = EXCLUDED.username,
+      display_name = EXCLUDED.display_name,
+      joined_at = EXCLUDED.joined_at,
+      left_at = NULL
+    `,
+    [
+      member.id,
+      member.user.username,
+      member.displayName,
+      member.user.createdAt.toISOString(),
+      nowISO()
+    ]
   );
 
   if (score >= 40) {
@@ -303,15 +356,19 @@ Recommended Action:
 Manual review.
 `
     );
+
+    await pool.query(
+      `UPDATE discord_users SET last_alerted_at = $1 WHERE discord_id = $2`,
+      [nowISO(), member.id]
+    );
   }
 });
 
-client.on("guildMemberRemove", member => {
-  db.prepare(`
-    UPDATE discord_users
-    SET left_at = ?
-    WHERE discord_id = ?
-  `).run(nowISO(), member.id);
+client.on("guildMemberRemove", async member => {
+  await pool.query(
+    `UPDATE discord_users SET left_at = $1 WHERE discord_id = $2`,
+    [nowISO(), member.id]
+  );
 });
 
 client.on("messageCreate", async message => {
@@ -322,14 +379,15 @@ client.on("messageCreate", async message => {
 
   const allowed = isAlertStaff(message.author.id);
 
+  if (!allowed) {
+    return message.reply("You are not authorized to use AltDetector3000 commands.");
+  }
+
   if (command === "ping") {
-    if (!allowed) return message.reply("You are not authorized to use AltDetector3000 commands.");
     return message.reply(`🏓 ${BOT_NAME} online. Ping: \`${client.ws.ping}ms\``);
   }
 
   if (command === "help") {
-    if (!allowed) return message.reply("You are not authorized to use AltDetector3000 commands.");
-
     return message.reply(`
 **${BOT_NAME} Commands**
 
@@ -344,12 +402,10 @@ client.on("messageCreate", async message => {
   }
 
   if (command === "altcheck") {
-    if (!allowed) return message.reply("You are not authorized to use AltDetector3000 commands.");
-
     const target = message.mentions.members.first();
     if (!target) return message.reply("Use: `!altcheck @user`");
 
-    const { score, reasons } = discordRisk(target);
+    const { score, reasons } = await discordRisk(target);
 
     return message.reply(`
 **Alt Check for ${target}**
@@ -362,33 +418,41 @@ ${reasons.length ? reasons.map(r => `- ${r}`).join("\n") : "- No major risk foun
   }
 
   if (command === "robloxcheck") {
-    if (!allowed) return message.reply("You are not authorized to use AltDetector3000 commands.");
-
     const robloxId = args[0];
     if (!robloxId) return message.reply("Use: `!robloxcheck ROBLOX_USER_ID`");
 
-    const row = db.prepare(`
-      SELECT username, first_seen, last_seen, flags
-      FROM roblox_users
-      WHERE roblox_id = ?
-    `).get(robloxId);
+    const robloxInfo = await getRobloxUserInfo(robloxId);
 
-    if (!row) return message.reply("No Roblox history found for that UserId.");
+    const row = await pool.query(
+      `
+      SELECT username, display_name, roblox_created_at, first_seen, last_seen, flags
+      FROM roblox_users
+      WHERE roblox_id = $1
+      `,
+      [robloxId]
+    );
+
+    if (row.rows.length === 0 && !robloxInfo) {
+      return message.reply("No Roblox history found and Roblox API lookup failed.");
+    }
+
+    const dbUser = row.rows[0];
 
     return message.reply(`
 **Roblox Check**
 
-Username: \`${row.username}\`
+Username: \`${dbUser?.username || robloxInfo?.name || "Unknown"}\`
+Display Name: \`${dbUser?.display_name || robloxInfo?.displayName || "Unknown"}\`
 Roblox UserId: \`${robloxId}\`
-First Seen: \`${row.first_seen}\`
-Last Seen: \`${row.last_seen}\`
-Flags: \`${row.flags || "None"}\`
+Roblox Created: \`${dbUser?.roblox_created_at || robloxInfo?.created || "Unknown"}\`
+Roblox Age: \`${robloxInfo?.created ? daysOld(robloxInfo.created) + " days" : "Unknown"}\`
+First Seen In ER:LC: \`${dbUser?.first_seen || "Not seen yet"}\`
+Last Seen In ER:LC: \`${dbUser?.last_seen || "Not seen yet"}\`
+Flags: \`${dbUser?.flags || "None"}\`
 `);
   }
 
   if (command === "link") {
-    if (!allowed) return message.reply("You are not authorized to use AltDetector3000 commands.");
-
     const target = message.mentions.members.first();
     const robloxId = args[1];
     const robloxUsername = args[2];
@@ -397,18 +461,21 @@ Flags: \`${row.flags || "None"}\`
       return message.reply("Use: `!link @user ROBLOX_USER_ID ROBLOX_USERNAME`");
     }
 
-    db.prepare(`
-      INSERT OR REPLACE INTO linked_accounts
+    await pool.query(
+      `
+      INSERT INTO linked_accounts
       (discord_id, roblox_id, roblox_username)
-      VALUES (?, ?, ?)
-    `).run(target.id, robloxId, robloxUsername);
+      VALUES ($1, $2, $3)
+      ON CONFLICT (discord_id, roblox_id) DO UPDATE SET
+        roblox_username = EXCLUDED.roblox_username
+      `,
+      [target.id, robloxId, robloxUsername]
+    );
 
     return message.reply(`Linked ${target} to Roblox \`${robloxUsername}\` / \`${robloxId}\`.`);
   }
 
   if (command === "flagdiscord") {
-    if (!allowed) return message.reply("You are not authorized to use AltDetector3000 commands.");
-
     const target = message.mentions.members.first();
     const reason = args.slice(1).join(" ");
 
@@ -416,30 +483,35 @@ Flags: \`${row.flags || "None"}\`
       return message.reply("Use: `!flagdiscord @user reason`");
     }
 
-    db.prepare(`
-      INSERT OR IGNORE INTO discord_users
+    await pool.query(
+      `
+      INSERT INTO discord_users
       (discord_id, username, display_name, created_at, joined_at, left_at, flags)
-      VALUES (?, ?, ?, ?, ?, NULL, '')
-    `).run(
-      target.id,
-      target.user.username,
-      target.displayName,
-      target.user.createdAt.toISOString(),
-      nowISO()
+      VALUES ($1, $2, $3, $4, $5, NULL, '')
+      ON CONFLICT (discord_id) DO NOTHING
+      `,
+      [
+        target.id,
+        target.user.username,
+        target.displayName,
+        target.user.createdAt.toISOString(),
+        nowISO()
+      ]
     );
 
-    db.prepare(`
+    await pool.query(
+      `
       UPDATE discord_users
-      SET flags = flags || ?
-      WHERE discord_id = ?
-    `).run(`\n${reason}`, target.id);
+      SET flags = COALESCE(flags, '') || $1
+      WHERE discord_id = $2
+      `,
+      [`\n${reason}`, target.id]
+    );
 
     return message.reply(`Flagged ${target}: \`${reason}\``);
   }
 
   if (command === "flagroblox") {
-    if (!allowed) return message.reply("You are not authorized to use AltDetector3000 commands.");
-
     const robloxId = args[0];
     const reason = args.slice(1).join(" ");
 
@@ -447,17 +519,33 @@ Flags: \`${row.flags || "None"}\`
       return message.reply("Use: `!flagroblox ROBLOX_USER_ID reason`");
     }
 
-    db.prepare(`
-      INSERT OR IGNORE INTO roblox_users
-      (roblox_id, username, first_seen, last_seen, flags)
-      VALUES (?, 'Unknown', ?, ?, '')
-    `).run(robloxId, nowISO(), nowISO());
+    const robloxInfo = await getRobloxUserInfo(robloxId);
 
-    db.prepare(`
+    await pool.query(
+      `
+      INSERT INTO roblox_users
+      (roblox_id, username, display_name, roblox_created_at, first_seen, last_seen, flags)
+      VALUES ($1, $2, $3, $4, $5, $6, '')
+      ON CONFLICT (roblox_id) DO NOTHING
+      `,
+      [
+        robloxId,
+        robloxInfo?.name || "Unknown",
+        robloxInfo?.displayName || null,
+        robloxInfo?.created || null,
+        nowISO(),
+        nowISO()
+      ]
+    );
+
+    await pool.query(
+      `
       UPDATE roblox_users
-      SET flags = flags || ?
-      WHERE roblox_id = ?
-    `).run(`\n${reason}`, robloxId);
+      SET flags = COALESCE(flags, '') || $1
+      WHERE roblox_id = $2
+      `,
+      [`\n${reason}`, robloxId]
+    );
 
     return message.reply(`Flagged Roblox \`${robloxId}\`: \`${reason}\``);
   }
