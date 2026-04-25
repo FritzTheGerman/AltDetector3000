@@ -18,6 +18,7 @@ const BOT_COLOR = 0xff0000;
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
 const ERLC_SERVER_KEY = process.env.ERLC_SERVER_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const STAFF_LOG_CHANNEL_ID = process.env.STAFF_LOG_CHANNEL_ID || "0";
@@ -28,6 +29,7 @@ const STAFF_ALERT_USER_IDS = (process.env.STAFF_ALERT_USER_IDS || "")
   .filter(Boolean);
 
 const ERLC_BASE_URL = "https://api.policeroleplay.community/v1";
+const ERLC_V2_BASE_URL = "https://api.policeroleplay.community/v2";
 
 const client = new Client({
   intents: [
@@ -82,6 +84,36 @@ function similarity(a = "", b = "") {
   const distance = matrix[b.length][a.length];
   const maxLength = Math.max(a.length, b.length);
   return maxLength === 0 ? 1 : 1 - distance / maxLength;
+}
+
+function getServerNameFromData(data) {
+  if (!data) return "Unknown";
+
+  return (
+    data.Name ||
+    data.name ||
+    data.ServerName ||
+    data.serverName ||
+    data.server_name ||
+    data.Server?.Name ||
+    data.server?.name ||
+    "Unknown"
+  );
+}
+
+function getPlayerCountFromServerData(data) {
+  if (!data) return "Unknown";
+
+  return (
+    data.CurrentPlayers ||
+    data.currentPlayers ||
+    data.current_players ||
+    data.PlayerCount ||
+    data.playerCount ||
+    data.players?.length ||
+    data.Players?.length ||
+    "Unknown"
+  );
 }
 
 async function setupDatabase() {
@@ -160,6 +192,50 @@ async function getRobloxUserInfo(robloxId) {
   }
 }
 
+async function fetchERLCServerInfo() {
+  if (!ERLC_SERVER_KEY) {
+    return {
+      ok: false,
+      status: "NO_KEY",
+      error: "Missing ERLC_SERVER_KEY",
+      data: null
+    };
+  }
+
+  try {
+    const response = await axios.get(`${ERLC_V2_BASE_URL}/server?Players=true`, {
+      headers: { "Server-Key": ERLC_SERVER_KEY }
+    });
+
+    return {
+      ok: true,
+      status: response.status,
+      version: "v2",
+      data: response.data
+    };
+  } catch (v2Error) {
+    try {
+      const response = await axios.get(`${ERLC_BASE_URL}/server`, {
+        headers: { "Server-Key": ERLC_SERVER_KEY }
+      });
+
+      return {
+        ok: true,
+        status: response.status,
+        version: "v1",
+        data: response.data
+      };
+    } catch (v1Error) {
+      return {
+        ok: false,
+        status: v1Error.response?.status || v2Error.response?.status || "ERROR",
+        error: v1Error.response?.data || v2Error.response?.data || v1Error.message || v2Error.message,
+        data: null
+      };
+    }
+  }
+}
+
 async function discordRisk(member) {
   let score = 0;
   const reasons = [];
@@ -199,8 +275,8 @@ async function robloxRisk(player, robloxInfo) {
   let score = 0;
   const reasons = [];
 
-  const username = String(player.Player || "Unknown");
-  const robloxId = String(player.RobloxId || "");
+  const username = String(player.Player || player.PlayerName || player.Username || "Unknown");
+  const robloxId = String(player.RobloxId || player.UserId || player.Id || "");
 
   if (robloxInfo?.created) {
     const robloxAge = daysOld(robloxInfo.created);
@@ -250,7 +326,7 @@ async function fetchERLCPlayers() {
 
     return Array.isArray(response.data) ? response.data : [];
   } catch (error) {
-    console.log("ERLC API error:", error.response?.status || error.message);
+    console.log("ERLC API error:", error.response?.status || error.message, error.response?.data || "");
     return [];
   }
 }
@@ -259,8 +335,8 @@ async function trackERLCPlayers() {
   const players = await fetchERLCPlayers();
 
   for (const player of players) {
-    const username = String(player.Player || "Unknown");
-    const robloxId = String(player.RobloxId || "");
+    const username = String(player.Player || player.PlayerName || player.Username || "Unknown");
+    const robloxId = String(player.RobloxId || player.UserId || player.Id || "");
 
     if (!robloxId || robloxId === "undefined") continue;
 
@@ -334,13 +410,14 @@ async function registerSlashCommands() {
       .setDescription("Show AltDetector3000 commands"),
 
     new SlashCommandBuilder()
+      .setName("erlctest")
+      .setDescription("Test ER:LC API connection and show server info"),
+
+    new SlashCommandBuilder()
       .setName("testalert")
       .setDescription("Send a test DM alert")
       .addUserOption(option =>
-        option
-          .setName("user")
-          .setDescription("Optional: test DM one specific user")
-          .setRequired(false)
+        option.setName("user").setDescription("Optional: test DM one specific user").setRequired(false)
       ),
 
     new SlashCommandBuilder()
@@ -351,85 +428,65 @@ async function registerSlashCommands() {
       .setName("altcheck")
       .setDescription("Check a Discord member for alt risk")
       .addUserOption(option =>
-        option
-          .setName("user")
-          .setDescription("Discord user to check")
-          .setRequired(true)
+        option.setName("user").setDescription("Discord user to check").setRequired(true)
       ),
 
     new SlashCommandBuilder()
       .setName("robloxcheck")
       .setDescription("Check a Roblox user by UserId")
       .addStringOption(option =>
-        option
-          .setName("roblox_id")
-          .setDescription("Roblox UserId")
-          .setRequired(true)
+        option.setName("roblox_id").setDescription("Roblox UserId").setRequired(true)
       ),
 
     new SlashCommandBuilder()
       .setName("link")
       .setDescription("Link a Discord user to a Roblox account")
       .addUserOption(option =>
-        option
-          .setName("user")
-          .setDescription("Discord user")
-          .setRequired(true)
+        option.setName("user").setDescription("Discord user").setRequired(true)
       )
       .addStringOption(option =>
-        option
-          .setName("roblox_id")
-          .setDescription("Roblox UserId")
-          .setRequired(true)
+        option.setName("roblox_id").setDescription("Roblox UserId").setRequired(true)
       )
       .addStringOption(option =>
-        option
-          .setName("roblox_username")
-          .setDescription("Roblox username")
-          .setRequired(true)
+        option.setName("roblox_username").setDescription("Roblox username").setRequired(true)
       ),
 
     new SlashCommandBuilder()
       .setName("flagdiscord")
       .setDescription("Add a staff flag to a Discord user")
       .addUserOption(option =>
-        option
-          .setName("user")
-          .setDescription("Discord user")
-          .setRequired(true)
+        option.setName("user").setDescription("Discord user").setRequired(true)
       )
       .addStringOption(option =>
-        option
-          .setName("reason")
-          .setDescription("Flag reason")
-          .setRequired(true)
+        option.setName("reason").setDescription("Flag reason").setRequired(true)
       ),
 
     new SlashCommandBuilder()
       .setName("flagroblox")
       .setDescription("Add a staff flag to a Roblox user")
       .addStringOption(option =>
-        option
-          .setName("roblox_id")
-          .setDescription("Roblox UserId")
-          .setRequired(true)
+        option.setName("roblox_id").setDescription("Roblox UserId").setRequired(true)
       )
       .addStringOption(option =>
-        option
-          .setName("reason")
-          .setDescription("Flag reason")
-          .setRequired(true)
+        option.setName("reason").setDescription("Flag reason").setRequired(true)
       )
   ].map(command => command.toJSON());
 
   const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
 
-  await rest.put(
-    Routes.applicationCommands(CLIENT_ID),
-    { body: commands }
-  );
-
-  console.log("Slash commands registered.");
+  if (GUILD_ID) {
+    await rest.put(
+      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+      { body: commands }
+    );
+    console.log("Guild slash commands registered.");
+  } else {
+    await rest.put(
+      Routes.applicationCommands(CLIENT_ID),
+      { body: commands }
+    );
+    console.log("Global slash commands registered.");
+  }
 }
 
 client.once("ready", async () => {
@@ -532,6 +589,7 @@ client.on("interactionCreate", async interaction => {
 
 \`/ping\` - Check if the bot is online
 \`/help\` - Show this command list
+\`/erlctest\` - Test ER:LC API and show server info
 \`/testalert\` - DM all staff a test alert
 \`/testalert user:@user\` - DM one specific user a test alert
 \`/alerts\` - Show who receives alerts
@@ -543,6 +601,41 @@ client.on("interactionCreate", async interaction => {
 `,
       ephemeral: true
     });
+  }
+
+  if (command === "erlctest") {
+    await interaction.deferReply({ ephemeral: true });
+
+    const serverInfo = await fetchERLCServerInfo();
+    const players = await fetchERLCPlayers();
+
+    if (!serverInfo.ok) {
+      return interaction.editReply(`
+**ER:LC API Test Failed**
+
+Status: \`${serverInfo.status}\`
+Error: \`${JSON.stringify(serverInfo.error)}\`
+
+Check:
+- ERLC_SERVER_KEY is correct
+- API pack is enabled
+- Server key was copied correctly
+`);
+    }
+
+    const serverName = getServerNameFromData(serverInfo.data);
+    const serverPlayerCount = getPlayerCountFromServerData(serverInfo.data);
+
+    return interaction.editReply(`
+**ER:LC API Test Successful**
+
+API Version Used: \`${serverInfo.version}\`
+Server Name: \`${serverName}\`
+Server Player Count From Server Info: \`${serverPlayerCount}\`
+Players From /server/players: \`${players.length}\`
+
+If the server name says Unknown, the API worked but did not return a name field in the format expected.
+`);
   }
 
   if (command === "testalert") {
