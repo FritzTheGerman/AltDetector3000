@@ -121,6 +121,24 @@ async function sendStaffAlert(title, description) {
   }
 }
 
+async function sendAlertToOneUser(userId, title, description) {
+  const user = await client.users.fetch(userId).catch(() => null);
+
+  if (!user) {
+    return false;
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle(`${BOT_NAME} Alert`)
+    .setDescription(`**${title}**\n\n${description}`)
+    .setColor(BOT_COLOR)
+    .setTimestamp()
+    .setFooter({ text: "AltDetector3000 • Direct Test Alert" });
+
+  await user.send({ embeds: [embed] }).catch(() => null);
+  return true;
+}
+
 async function getRobloxUserInfo(robloxId) {
   try {
     const response = await axios.get(`https://users.roblox.com/v1/users/${robloxId}`);
@@ -393,11 +411,84 @@ client.on("messageCreate", async message => {
 
 \`!ping\` - Check if the bot is online
 \`!help\` - Show this command list
+\`!testalert\` - DM all staff a test alert
+\`!testalert @user\` - DM one specific user a test alert
+\`!alerts list\` - Show who receives alerts
 \`!altcheck @user\` - Check a Discord member
 \`!robloxcheck ROBLOX_USER_ID\` - Check Roblox history
 \`!link @user ROBLOX_USER_ID ROBLOX_USERNAME\` - Link Discord to Roblox
 \`!flagdiscord @user reason\` - Add a flag to Discord user
 \`!flagroblox ROBLOX_USER_ID reason\` - Add a flag to Roblox user
+`);
+  }
+
+  if (command === "testalert") {
+    const target = message.mentions.users.first();
+
+    if (target) {
+      const sent = await sendAlertToOneUser(
+        target.id,
+        "Single User Test Alert",
+        `
+This is a direct test alert from AltDetector3000.
+
+Triggered by: ${message.author}
+Sent to: ${target}
+Time: ${new Date().toISOString()}
+
+If this DM was received, direct test alerts are working.
+`
+      );
+
+      if (!sent) {
+        return message.reply("❌ Could not send the test alert to that user.");
+      }
+
+      return message.reply(`✅ Test alert sent to ${target}.`);
+    }
+
+    await sendStaffAlert(
+      "Staff Test Alert",
+      `
+This is a test alert from AltDetector3000.
+
+Triggered by: ${message.author}
+Time: ${new Date().toISOString()}
+
+If you see this, staff DM alerts are working correctly.
+`
+    );
+
+    return message.reply("✅ Test alert sent to all staff.");
+  }
+
+  if (command === "alerts") {
+    const subcommand = args[0]?.toLowerCase();
+
+    if (subcommand !== "list") {
+      return message.reply("Use: `!alerts list`");
+    }
+
+    if (STAFF_ALERT_USER_IDS.length === 0) {
+      return message.reply("No staff alert users are set in `STAFF_ALERT_USER_IDS`.");
+    }
+
+    const lines = [];
+
+    for (const id of STAFF_ALERT_USER_IDS) {
+      const user = await client.users.fetch(id).catch(() => null);
+
+      if (user) {
+        lines.push(`- ${user.tag} / \`${id}\``);
+      } else {
+        lines.push(`- Unknown User / \`${id}\``);
+      }
+    }
+
+    return message.reply(`
+**AltDetector3000 Alert Staff**
+
+${lines.join("\n")}
 `);
   }
 
