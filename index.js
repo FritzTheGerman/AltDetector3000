@@ -86,6 +86,33 @@ function similarity(a = "", b = "") {
   return maxLength === 0 ? 1 : 1 - distance / maxLength;
 }
 
+function parseERLCPlayer(player) {
+  const rawPlayer = String(player.Player || "");
+  const split = rawPlayer.split(":");
+
+  const username =
+    player.Username ||
+    player.PlayerName ||
+    player.Name ||
+    split[0] ||
+    "Unknown";
+
+  const robloxId =
+    player.RobloxId ||
+    player.RobloxID ||
+    player.UserId ||
+    player.UserID ||
+    player.Id ||
+    player.ID ||
+    split[1] ||
+    "";
+
+  return {
+    username: String(username).trim(),
+    robloxId: String(robloxId).trim()
+  };
+}
+
 function getServerNameFromData(data) {
   if (!data) return "Unknown";
 
@@ -251,7 +278,7 @@ async function discordRisk(member) {
   }
 
   const oldUsers = await pool.query(
-    `SELECT username, display_name, left_at, flags FROM discord_users WHERE discord_id != $1`,
+    `SELECT username, display_name FROM discord_users WHERE discord_id != $1`,
     [member.id]
   );
 
@@ -275,8 +302,7 @@ async function robloxRisk(player, robloxInfo) {
   let score = 0;
   const reasons = [];
 
-  const username = String(player.Player || player.PlayerName || player.Username || "Unknown");
-  const robloxId = String(player.RobloxId || player.UserId || player.Id || "");
+  const { username, robloxId } = parseERLCPlayer(player);
 
   if (robloxInfo?.created) {
     const robloxAge = daysOld(robloxInfo.created);
@@ -335,10 +361,12 @@ async function trackERLCPlayers() {
   const players = await fetchERLCPlayers();
 
   for (const player of players) {
-    const username = String(player.Player || player.PlayerName || player.Username || "Unknown");
-    const robloxId = String(player.RobloxId || player.UserId || player.Id || "");
+    const { username, robloxId } = parseERLCPlayer(player);
 
-    if (!robloxId || robloxId === "undefined") continue;
+    if (!robloxId || robloxId === "undefined") {
+      console.log("Skipped ERLC player, no Roblox ID found:", JSON.stringify(player));
+      continue;
+    }
 
     const robloxInfo = await getRobloxUserInfo(robloxId);
 
@@ -626,6 +654,14 @@ Check:
     const serverName = getServerNameFromData(serverInfo.data);
     const serverPlayerCount = getPlayerCountFromServerData(serverInfo.data);
 
+    const samplePlayers = players
+      .slice(0, 5)
+      .map(p => {
+        const parsed = parseERLCPlayer(p);
+        return `- ${parsed.username} / ${parsed.robloxId || "NO ID FOUND"}`;
+      })
+      .join("\n") || "- No players returned";
+
     return interaction.editReply(`
 **ER:LC API Test Successful**
 
@@ -634,7 +670,10 @@ Server Name: \`${serverName}\`
 Server Player Count From Server Info: \`${serverPlayerCount}\`
 Players From /server/players: \`${players.length}\`
 
-If the server name says Unknown, the API worked but did not return a name field in the format expected.
+**Sample Parsed Players**
+${samplePlayers}
+
+If Roblox IDs show as "NO ID FOUND", send me the ER:LC player format from Railway logs.
 `);
   }
 
