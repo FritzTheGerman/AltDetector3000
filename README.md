@@ -1,1 +1,9 @@
-
+/ping
+/help
+/testalert
+/alerts
+/altcheck
+/robloxcheck
+/link
+/flagdiscord
+/flagroblox
