@@ -219,6 +219,33 @@ async function getRobloxUserInfo(robloxId) {
   }
 }
 
+async function runERLCCommand(commandText) {
+  if (!ERLC_SERVER_KEY) {
+    return { ok: false, status: "NO_KEY", error: "Missing ERLC_SERVER_KEY" };
+  }
+
+  try {
+    const response = await axios.post(
+      `${ERLC_BASE_URL}/server/command`,
+      { command: commandText },
+      {
+        headers: {
+          "Server-Key": ERLC_SERVER_KEY,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    return { ok: true, status: response.status };
+  } catch (error) {
+    return {
+      ok: false,
+      status: error.response?.status || "ERROR",
+      error: error.response?.data || error.message
+    };
+  }
+}
+
 async function fetchERLCServerInfo() {
   if (!ERLC_SERVER_KEY) {
     return {
@@ -307,12 +334,12 @@ async function robloxRisk(player, robloxInfo) {
   if (robloxInfo?.created) {
     const robloxAge = daysOld(robloxInfo.created);
 
-    if (robloxAge <= 7) {
+    if (robloxAge <= 30) {
       score += 40;
-      reasons.push("Roblox account is under 7 days old");
-    } else if (robloxAge <= 30) {
-      score += 25;
       reasons.push("Roblox account is under 30 days old");
+    } else if (robloxAge <= 365) {
+      score += 25;
+      reasons.push("Roblox account is under 1 year old");
     }
   }
 
@@ -401,7 +428,7 @@ async function trackERLCPlayers() {
     const lastAlerted = existing.rows[0]?.last_alerted_at;
     const canAlertAgain = !lastAlerted || daysOld(lastAlerted) >= 1;
 
-    if (score >= 45 && canAlertAgain) {
+    if (score >= 60 && canAlertAgain) {
       await sendStaffAlert(
         "Suspected Roblox Alt Detected",
         `
@@ -440,6 +467,16 @@ async function registerSlashCommands() {
     new SlashCommandBuilder()
       .setName("erlctest")
       .setDescription("Test ER:LC API connection and show server info"),
+
+    new SlashCommandBuilder()
+      .setName("kill")
+      .setDescription("Kill a player in ER:LC")
+      .addStringOption(option =>
+        option
+          .setName("roblox_username")
+          .setDescription("Roblox username to kill")
+          .setRequired(true)
+      ),
 
     new SlashCommandBuilder()
       .setName("testalert")
@@ -618,6 +655,7 @@ client.on("interactionCreate", async interaction => {
 \`/ping\` - Check if the bot is online
 \`/help\` - Show this command list
 \`/erlctest\` - Test ER:LC API and show server info
+\`/kill roblox_username:Name\` - Kill a player in ER:LC
 \`/testalert\` - DM all staff a test alert
 \`/testalert user:@user\` - DM one specific user a test alert
 \`/alerts\` - Show who receives alerts
@@ -672,8 +710,31 @@ Players From /server/players: \`${players.length}\`
 
 **Sample Parsed Players**
 ${samplePlayers}
+`);
+  }
 
-If Roblox IDs show as "NO ID FOUND", send me the ER:LC player format from Railway logs.
+  if (command === "kill") {
+    const robloxUsername = interaction.options.getString("roblox_username");
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const result = await runERLCCommand(`:kill ${robloxUsername}`);
+
+    if (!result.ok) {
+      return interaction.editReply(`
+❌ Failed to execute kill command.
+
+Player: \`${robloxUsername}\`
+Status: \`${result.status}\`
+Error: \`${JSON.stringify(result.error)}\`
+`);
+    }
+
+    return interaction.editReply(`
+✅ Kill command sent successfully.
+
+Player: \`${robloxUsername}\`
+Command: \`:kill ${robloxUsername}\`
 `);
   }
 
