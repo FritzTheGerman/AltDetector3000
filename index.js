@@ -4,8 +4,7 @@ const {
   Client,
   GatewayIntentBits,
   EmbedBuilder,
-  ActivityType,
-  PermissionsBitField
+  ActivityType
 } = require("discord.js");
 
 const axios = require("axios");
@@ -62,6 +61,10 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 });
+
+function isAlertStaff(userId) {
+  return STAFF_ALERT_USER_IDS.includes(String(userId));
+}
 
 function nowISO() {
   return new Date().toISOString();
@@ -317,14 +320,31 @@ client.on("messageCreate", async message => {
   const args = message.content.slice(1).trim().split(/ +/);
   const command = args.shift()?.toLowerCase();
 
-  const canManage = message.member?.permissions.has(PermissionsBitField.Flags.ManageGuild);
+  const allowed = isAlertStaff(message.author.id);
 
   if (command === "ping") {
+    if (!allowed) return message.reply("You are not authorized to use AltDetector3000 commands.");
     return message.reply(`🏓 ${BOT_NAME} online. Ping: \`${client.ws.ping}ms\``);
   }
 
+  if (command === "help") {
+    if (!allowed) return message.reply("You are not authorized to use AltDetector3000 commands.");
+
+    return message.reply(`
+**${BOT_NAME} Commands**
+
+\`!ping\` - Check if the bot is online
+\`!help\` - Show this command list
+\`!altcheck @user\` - Check a Discord member
+\`!robloxcheck ROBLOX_USER_ID\` - Check Roblox history
+\`!link @user ROBLOX_USER_ID ROBLOX_USERNAME\` - Link Discord to Roblox
+\`!flagdiscord @user reason\` - Add a flag to Discord user
+\`!flagroblox ROBLOX_USER_ID reason\` - Add a flag to Roblox user
+`);
+  }
+
   if (command === "altcheck") {
-    if (!canManage) return message.reply("You need Manage Server permission.");
+    if (!allowed) return message.reply("You are not authorized to use AltDetector3000 commands.");
 
     const target = message.mentions.members.first();
     if (!target) return message.reply("Use: `!altcheck @user`");
@@ -342,7 +362,7 @@ ${reasons.length ? reasons.map(r => `- ${r}`).join("\n") : "- No major risk foun
   }
 
   if (command === "robloxcheck") {
-    if (!canManage) return message.reply("You need Manage Server permission.");
+    if (!allowed) return message.reply("You are not authorized to use AltDetector3000 commands.");
 
     const robloxId = args[0];
     if (!robloxId) return message.reply("Use: `!robloxcheck ROBLOX_USER_ID`");
@@ -367,7 +387,7 @@ Flags: \`${row.flags || "None"}\`
   }
 
   if (command === "link") {
-    if (!canManage) return message.reply("You need Manage Server permission.");
+    if (!allowed) return message.reply("You are not authorized to use AltDetector3000 commands.");
 
     const target = message.mentions.members.first();
     const robloxId = args[1];
@@ -387,7 +407,7 @@ Flags: \`${row.flags || "None"}\`
   }
 
   if (command === "flagdiscord") {
-    if (!canManage) return message.reply("You need Manage Server permission.");
+    if (!allowed) return message.reply("You are not authorized to use AltDetector3000 commands.");
 
     const target = message.mentions.members.first();
     const reason = args.slice(1).join(" ");
@@ -418,7 +438,7 @@ Flags: \`${row.flags || "None"}\`
   }
 
   if (command === "flagroblox") {
-    if (!canManage) return message.reply("You need Manage Server permission.");
+    if (!allowed) return message.reply("You are not authorized to use AltDetector3000 commands.");
 
     const robloxId = args[0];
     const reason = args.slice(1).join(" ");
@@ -440,19 +460,6 @@ Flags: \`${row.flags || "None"}\`
     `).run(`\n${reason}`, robloxId);
 
     return message.reply(`Flagged Roblox \`${robloxId}\`: \`${reason}\``);
-  }
-
-  if (command === "help") {
-    return message.reply(`
-**${BOT_NAME} Commands**
-
-\`!ping\` - Check if the bot is online
-\`!altcheck @user\` - Check a Discord member
-\`!robloxcheck ROBLOX_USER_ID\` - Check Roblox history
-\`!link @user ROBLOX_USER_ID ROBLOX_USERNAME\` - Link Discord to Roblox
-\`!flagdiscord @user reason\` - Add a flag to Discord user
-\`!flagroblox ROBLOX_USER_ID reason\` - Add a flag to Roblox user
-`);
   }
 });
 
