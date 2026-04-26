@@ -36,6 +36,24 @@ async function setupDatabase() {
       roblox_username TEXT,
       PRIMARY KEY(discord_id, roblox_id)
     );
+
+    CREATE TABLE IF NOT EXISTS sync_meta (
+      sync_name TEXT PRIMARY KEY,
+      last_synced_at TIMESTAMPTZ
+    );
+
+    CREATE TABLE IF NOT EXISTS command_logs (
+      id SERIAL PRIMARY KEY,
+      command_name TEXT,
+      user_id TEXT,
+      username TEXT,
+      guild_id TEXT,
+      channel_id TEXT,
+      options_json TEXT,
+      status TEXT,
+      error_message TEXT,
+      ran_at TIMESTAMPTZ DEFAULT NOW()
+    );
   `);
 }
 
