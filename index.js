@@ -6,6 +6,7 @@ const { setupDatabase } = require("./src/database");
 const { registerSlashCommands } = require("./src/commands");
 const { handleInteraction, handleMemberJoin, handleMemberLeave } = require("./src/handlers");
 const { trackERLCPlayers, startRefreshLoop } = require("./src/erlc");
+const { syncDatabaseToGoogleSheets } = require("./src/sheets");
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
@@ -27,6 +28,10 @@ client.once("ready", async () => {
     setInterval(() => trackERLCPlayers(client), 60000);
 
     startRefreshLoop();
+
+    syncDatabaseToGoogleSheets();
+    setInterval(syncDatabaseToGoogleSheets, 300000);
+
     console.log("AltDetector3000 fully started.");
   } catch (error) {
     console.error("Startup error:", error);
