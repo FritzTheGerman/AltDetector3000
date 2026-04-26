@@ -16,9 +16,28 @@ async function registerSlashCommands() {
 
     new SlashCommandBuilder()
       .setName("lock")
-      .setDescription("Lock a player by refreshing them every 3 seconds")
+      .setDescription("Refresh-lock a player for a set amount of time")
+      .addIntegerOption(option =>
+        option
+          .setName("refresh_seconds")
+          .setDescription("How often to refresh them, in seconds. Minimum 3.")
+          .setRequired(true)
+          .setMinValue(3)
+          .setMaxValue(60)
+      )
+      .addIntegerOption(option =>
+        option
+          .setName("duration_minutes")
+          .setDescription("How long the lock lasts, in minutes.")
+          .setRequired(true)
+          .setMinValue(1)
+          .setMaxValue(60)
+      )
       .addStringOption(option =>
-        option.setName("roblox_username").setDescription("Roblox username to lock").setRequired(true)
+        option
+          .setName("roblox_username")
+          .setDescription("Roblox username to lock")
+          .setRequired(true)
       ),
 
     new SlashCommandBuilder()
