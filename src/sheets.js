@@ -375,33 +375,34 @@ async function updateDashboard(sheets, stats, currentSync) {
     requestBody: { values }
   });
 
-  const dashboardSheetId = await getSheetIdByTitle(sheets, "dashboard");
+const dashboardSheetId = await getSheetIdByTitle(sheets, "dashboard");
 
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId: GOOGLE_SHEET_ID,
-    requestBody: {
-      requests: [
-        {
-          repeatCell: {
-            range: {
-              sheetId: dashboardSheetId,
-              startRowIndex: 0,
-              endRowIndex: 1
-            },
-            cell: {
-              userEnteredFormat: {
-                textFormat: {
-                  bold: true,
-                  fontSize: 16,
-                  foregroundColor: { red: 1, green: 1, blue: 1 }
-                },
-                backgroundColor: { red: 0.1, green: 0.1, blue: 0.1 }
-              }
-            },
-            fields: "userEnteredFormat(textFormat,backgroundColor)"
+await sheets.spreadsheets.batchUpdate({
+  spreadsheetId: GOOGLE_SHEET_ID,
+  requestBody: {
+    requests: [
+      {
+        autoResizeDimensions: {
+          dimensions: {
+            sheetId: dashboardSheetId,
+            dimension: "COLUMNS",
+            startIndex: 0,
+            endIndex: 10
           }
-        },
-        {
+        }
+      },
+      {
+        updateSheetProperties: {
+          properties: {
+            sheetId: dashboardSheetId,
+            gridProperties: { frozenRowCount: 1 }
+          },
+          fields: "gridProperties.frozenRowCount"
+        }
+      }
+    ]
+  }
+});
           repeatCell: {
             range: {
               sheetId: dashboardSheetId,
