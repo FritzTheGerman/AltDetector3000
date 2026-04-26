@@ -1,6 +1,6 @@
 const { EmbedBuilder } = require("discord.js");
 const { pool } = require("./database");
-const { BOT_NAME, BOT_COLOR, isStaff, STAFF_ALERT_USER_IDS } = require("./config");
+const { BOT_NAME, BOT_COLOR, isStaff, STAFF_ALERT_USER_IDS, OWNER_USER_ID } = require("./config");
 const { sendStaffAlert, sendAlertToOneUser } = require("./alerts");
 const { discordRisk, daysOld } = require("./risk");
 const {
