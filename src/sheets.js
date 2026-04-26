@@ -16,18 +16,7 @@ async function getSheetsClient() {
   return google.sheets({ version: "v4", auth });
 }
 
-async function setupSyncMeta() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS sync_meta (
-      sync_name TEXT PRIMARY KEY,
-      last_synced_at TIMESTAMPTZ
-    );
-  `);
-}
-
 async function getLastSheetsSyncTime() {
-  await setupSyncMeta();
-
   const result = await pool.query(
     `SELECT last_synced_at FROM sync_meta WHERE sync_name = 'google_sheets'`
   );
@@ -36,8 +25,6 @@ async function getLastSheetsSyncTime() {
 }
 
 async function setLastSheetsSyncTime(time) {
-  await setupSyncMeta();
-
   await pool.query(
     `
     INSERT INTO sync_meta (sync_name, last_synced_at)
@@ -82,50 +69,61 @@ async function writeTableToSheet(sheets, tableName, columns) {
 }
 
 async function getSyncStats(previousSync) {
-  const stats = {
-    discordTotal: 0,
-    robloxTotal: 0,
-    linkedTotal: 0,
-    discordNew: 0,
-    robloxNew: 0,
-    discordUpdated: 0,
-    robloxUpdated: 0
-  };
+  const discordTotal = Number((await pool.query(`SELECT COUNT(*) FROM discord_users`)).rows[0].count);
+  const robloxTotal = Number((await pool.query(`SELECT COUNT(*) FROM roblox_users`)).rows[0].count);
+  const linkedTotal = Number((await pool.query(`SELECT COUNT(*) FROM linked_accounts`)).rows[0].count);
+  const commandTotal = Number((await pool.query(`SELECT COUNT(*) FROM command_logs`)).rows[0].count);
 
-  stats.discordTotal = Number((await pool.query(`SELECT COUNT(*) FROM discord_users`)).rows[0].count);
-  stats.robloxTotal = Number((await pool.query(`SELECT COUNT(*) FROM roblox_users`)).rows[0].count);
-  stats.linkedTotal = Number((await pool.query(`SELECT COUNT(*) FROM linked_accounts`)).rows[0].count);
-
-  if (previousSync) {
-    stats.discordNew = Number(
-      (await pool.query(`SELECT COUNT(*) FROM discord_users WHERE joined_at > $1`, [previousSync])).rows[0].count
-    );
-
-    stats.robloxNew = Number(
-      (await pool.query(`SELECT COUNT(*) FROM roblox_users WHERE first_seen > $1`, [previousSync])).rows[0].count
-    );
-
-    stats.discordUpdated = Number(
-      (await pool.query(
-        `SELECT COUNT(*) FROM discord_users WHERE joined_at > $1 OR left_at > $1 OR last_alerted_at > $1`,
-        [previousSync]
-      )).rows[0].count
-    );
-
-    stats.robloxUpdated = Number(
-      (await pool.query(
-        `SELECT COUNT(*) FROM roblox_users WHERE first_seen > $1 OR last_seen > $1 OR last_alerted_at > $1`,
-        [previousSync]
-      )).rows[0].count
-    );
-  } else {
-    stats.discordNew = stats.discordTotal;
-    stats.robloxNew = stats.robloxTotal;
-    stats.discordUpdated = stats.discordTotal;
-    stats.robloxUpdated = stats.robloxTotal;
+  if (!previousSync) {
+    return {
+      discordTotal,
+      robloxTotal,
+      linkedTotal,
+      commandTotal,
+      discordNew: discordTotal,
+      robloxNew: robloxTotal,
+      commandNew: commandTotal,
+      discordUpdated: discordTotal,
+      robloxUpdated: robloxTotal
+    };
   }
 
-  return stats;
+  const discordNew = Number((await pool.query(
+    `SELECT COUNT(*) FROM discord_users WHERE joined_at > $1`,
+    [previousSync]
+  )).rows[0].count);
+
+  const robloxNew = Number((await pool.query(
+    `SELECT COUNT(*) FROM roblox_users WHERE first_seen > $1`,
+    [previousSync]
+  )).rows[0].count);
+
+  const commandNew = Number((await pool.query(
+    `SELECT COUNT(*) FROM command_logs WHERE ran_at > $1`,
+    [previousSync]
+  )).rows[0].count);
+
+  const discordUpdated = Number((await pool.query(
+    `SELECT COUNT(*) FROM discord_users WHERE joined_at > $1 OR left_at > $1 OR last_alerted_at > $1`,
+    [previousSync]
+  )).rows[0].count);
+
+  const robloxUpdated = Number((await pool.query(
+    `SELECT COUNT(*) FROM roblox_users WHERE first_seen > $1 OR last_seen > $1 OR last_alerted_at > $1`,
+    [previousSync]
+  )).rows[0].count);
+
+  return {
+    discordTotal,
+    robloxTotal,
+    linkedTotal,
+    commandTotal,
+    discordNew,
+    robloxNew,
+    commandNew,
+    discordUpdated,
+    robloxUpdated
+  };
 }
 
 async function syncDatabaseToGoogleSheets() {
@@ -147,7 +145,6 @@ async function syncDatabaseToGoogleSheets() {
 
   const previousSync = await getLastSheetsSyncTime();
   const currentSync = new Date();
-
   const sheets = await getSheetsClient();
 
   const discordRows = await writeTableToSheet(sheets, "discord_users", [
@@ -178,6 +175,19 @@ async function syncDatabaseToGoogleSheets() {
     "roblox_username"
   ]);
 
+  const commandRows = await writeTableToSheet(sheets, "command_logs", [
+    "id",
+    "command_name",
+    "user_id",
+    "username",
+    "guild_id",
+    "channel_id",
+    "options_json",
+    "status",
+    "error_message",
+    "ran_at"
+  ]);
+
   const stats = await getSyncStats(previousSync);
   await setLastSheetsSyncTime(currentSync);
 
@@ -190,7 +200,8 @@ async function syncDatabaseToGoogleSheets() {
     rows: {
       discordRows,
       robloxRows,
-      linkedRows
+      linkedRows,
+      commandRows
     },
     stats
   };
