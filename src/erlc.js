@@ -8,7 +8,7 @@ const {
 const { sendStaffAlert } = require("./alerts");
 const { robloxRisk } = require("./risk");
 
-const lockedPlayers = new Set();
+const lockedPlayers = new Map();
 
 function nowISO() {
   return new Date().toISOString();
@@ -19,24 +19,64 @@ function daysOld(date) {
   return Math.floor((Date.now() - new Date(date).getTime()) / 86400000);
 }
 
-function lockPlayer(username) {
-  lockedPlayers.add(String(username).toLowerCase());
+function lockPlayer(username, refreshSeconds, durationMinutes) {
+  const key = String(username).toLowerCase();
+
+  const intervalMs = Math.max(3000, refreshSeconds * 1000);
+  const durationMs = Math.max(60000, durationMinutes * 60000);
+  const expiresAt = Date.now() + durationMs;
+
+  if (lockedPlayers.has(key)) {
+    clearInterval(lockedPlayers.get(key).interval);
+  }
+
+  const interval = setInterval(async () => {
+    if (!lockedPlayers.has(key)) {
+      clearInterval(interval);
+      return;
+    }
+
+    if (Date.now() >= expiresAt) {
+      clearInterval(interval);
+      lockedPlayers.delete(key);
+      return;
+    }
+
+    await runERLCCommand(`:refresh ${username}`);
+  }, intervalMs);
+
+  lockedPlayers.set(key, {
+    username,
+    refreshSeconds,
+    durationMinutes,
+    expiresAt,
+    interval
+  });
 }
 
 function unlockPlayer(username) {
-  lockedPlayers.delete(String(username).toLowerCase());
+  const key = String(username).toLowerCase();
+
+  if (lockedPlayers.has(key)) {
+    clearInterval(lockedPlayers.get(key).interval);
+    lockedPlayers.delete(key);
+    return true;
+  }
+
+  return false;
 }
 
 function getLockedPlayers() {
-  return Array.from(lockedPlayers);
+  return Array.from(lockedPlayers.values()).map(lock => ({
+    username: lock.username,
+    refreshSeconds: lock.refreshSeconds,
+    durationMinutes: lock.durationMinutes,
+    remainingMinutes: Math.max(0, Math.ceil((lock.expiresAt - Date.now()) / 60000))
+  }));
 }
 
 function startRefreshLoop() {
-  setInterval(async () => {
-    for (const username of lockedPlayers) {
-      await runERLCCommand(`:refresh ${username}`);
-    }
-  }, 1000);
+  console.log("Lock refresh system ready.");
 }
 
 function parseERLCPlayer(player) {
