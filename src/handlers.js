@@ -256,7 +256,8 @@ Duration: \`${durationMinutes} minute(s)\``
 
     if (unlocked) {
       await runERLCCommand(`:unjail ${robloxUsername}`).catch(() => {});
-      await runERLCCommand(`:pm ${robloxUsername} You have been unlocked.`).catch(() => {});
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      await runERLCCommand(`:pm ${robloxUsername} "You have been unlocked."`).catch(() => {});
     }
 
     return replyEmbed(
