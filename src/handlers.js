@@ -129,11 +129,14 @@ async function runInteraction(client, interaction) {
   const command = interaction.commandName;
 
   if (!isStaff(interaction.user.id)) {
-    return replyEmbed(
-      interaction,
-      "Unauthorized",
-      "You are not authorized to use AltDetector3000 commands.",
-      0xff5555
+  const ownerPing = OWNER_USER_ID ? `<@${OWNER_USER_ID}>` : "Owner not set";
+
+  return replyEmbed(
+    interaction,
+    "Unauthorized",
+    `${interaction.user} tried to use \`/${interaction.commandName}\` but is not authorized.\n\nOwner Alert: ${ownerPing}`,
+    0xff5555,
+    false // 👈 THIS is the important part (makes it public)
     );
   }
 
