@@ -104,6 +104,12 @@ Manual review.
       member.id
     ]);
   }
+
+  try {
+    await syncDatabaseToGoogleSheets();
+  } catch (error) {
+    console.error("Auto join sheet sync failed:", error.message);
+  }
 }
 
 async function handleMemberLeave(member) {
@@ -111,6 +117,12 @@ async function handleMemberLeave(member) {
     nowISO(),
     member.id
   ]);
+
+  try {
+    await syncDatabaseToGoogleSheets();
+  } catch (error) {
+    console.error("Auto leave sheet sync failed:", error.message);
+  }
 }
 
 async function runInteraction(client, interaction) {
@@ -488,6 +500,12 @@ async function handleInteraction(client, interaction) {
     ).catch(() => {});
   } finally {
     await logCommand(interaction, status, errorMessage);
+
+    try {
+      await syncDatabaseToGoogleSheets();
+    } catch (error) {
+      console.error("Auto command sheet sync failed:", error.message);
+    }
   }
 }
 
