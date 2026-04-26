@@ -17,7 +17,9 @@ async function getSheetsClient() {
 }
 
 async function writeTableToSheet(sheets, tableName, columns) {
-  const result = await pool.query(`SELECT ${columns.join(", ")} FROM ${tableName} ORDER BY 1`);
+  const result = await pool.query(
+    `SELECT ${columns.join(", ")} FROM ${tableName} ORDER BY 1`
+  );
 
   const values = [
     columns,
@@ -46,6 +48,7 @@ async function writeTableToSheet(sheets, tableName, columns) {
 
 async function syncDatabaseToGoogleSheets() {
   if (!SYNC_GOOGLE_SHEETS) return;
+
   if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY) {
     console.log("Google Sheets sync skipped: missing env variables.");
     return;
