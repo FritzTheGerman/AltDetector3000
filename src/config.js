@@ -15,6 +15,7 @@ const STAFF_ALERT_USER_IDS = (process.env.STAFF_ALERT_USER_IDS || "")
 
 const ERLC_BASE_URL = "https://api.policeroleplay.community/v1";
 const ERLC_V2_BASE_URL = "https://api.policeroleplay.community/v2";
+const OWNER_USER_ID = process.env.OWNER_USER_ID;
 
 function isStaff(userId) {
   return STAFF_ALERT_USER_IDS.includes(String(userId));
@@ -30,6 +31,7 @@ module.exports = {
   DATABASE_URL,
   STAFF_LOG_CHANNEL_ID,
   STAFF_ALERT_USER_IDS,
+  OWNER_USER_ID,
   ERLC_BASE_URL,
   ERLC_V2_BASE_URL,
   isStaff
