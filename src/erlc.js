@@ -20,7 +20,13 @@ function daysOld(date) {
   return Math.floor((Date.now() - new Date(date).getTime()) / 86400000);
 }
 
-function lockPlayer(username, refreshSeconds, durationMinutes) {
+function formatRemainingTime(expiresAt) {
+  const remainingMs = Math.max(0, expiresAt - Date.now());
+  const remainingMinutes = Math.ceil(remainingMs / 60000);
+  return `${remainingMinutes} minute(s)`;
+}
+
+function lockPlayer(username, refreshSeconds, durationMinutes, lockedBy = "Staff") {
   const key = String(username).toLowerCase();
 
   const intervalMs = Math.max(3000, refreshSeconds * 1000);
@@ -31,6 +37,18 @@ function lockPlayer(username, refreshSeconds, durationMinutes) {
     clearInterval(lockedPlayers.get(key).interval);
   }
 
+  async function runCycle() {
+    const timeRemaining = formatRemainingTime(expiresAt);
+
+    await runERLCCommand(`:jail ${username}`).catch(() => {});
+
+    await runERLCCommand(
+      `:pm ${username} You have been locked by ${lockedBy}. You will be unlocked in ${timeRemaining}.`
+    ).catch(() => {});
+  }
+
+  runCycle();
+
   const interval = setInterval(async () => {
     if (!lockedPlayers.has(key)) {
       clearInterval(interval);
@@ -40,16 +58,20 @@ function lockPlayer(username, refreshSeconds, durationMinutes) {
     if (Date.now() >= expiresAt) {
       clearInterval(interval);
       lockedPlayers.delete(key);
+
+      await runERLCCommand(`:unjail ${username}`).catch(() => {});
+      await runERLCCommand(`:pm ${username} You have been unlocked.`).catch(() => {});
       return;
     }
 
-    await runERLCCommand(`:refresh ${username}`);
+    await runCycle();
   }, intervalMs);
 
   lockedPlayers.set(key, {
     username,
     refreshSeconds,
     durationMinutes,
+    lockedBy,
     expiresAt,
     interval
   });
@@ -72,12 +94,13 @@ function getLockedPlayers() {
     username: lock.username,
     refreshSeconds: lock.refreshSeconds,
     durationMinutes: lock.durationMinutes,
+    lockedBy: lock.lockedBy,
     remainingMinutes: Math.max(0, Math.ceil((lock.expiresAt - Date.now()) / 60000))
   }));
 }
 
 function startRefreshLoop() {
-  console.log("Lock refresh system ready.");
+  console.log("Lock jail system ready.");
 }
 
 function parseERLCPlayer(player) {
