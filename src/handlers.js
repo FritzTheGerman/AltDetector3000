@@ -96,7 +96,7 @@ async function handleInteraction(client, interaction) {
 \`/help\`
 \`/erlctest\`
 \`/kill roblox_username:Name\`
-\`/lock roblox_username:Name\`
+\`/lock refresh_seconds:5 duration_minutes:10 roblox_username:Name\`
 \`/unlock roblox_username:Name\`
 \`/locks\`
 \`/testalert\`
@@ -172,23 +172,26 @@ Command: \`:kill ${robloxUsername}\`
   }
 
   if (command === "lock") {
+    const refreshSeconds = interaction.options.getInteger("refresh_seconds");
+    const durationMinutes = interaction.options.getInteger("duration_minutes");
     const robloxUsername = interaction.options.getString("roblox_username");
 
-    lockPlayer(robloxUsername);
+    lockPlayer(robloxUsername, refreshSeconds, durationMinutes);
 
     return interaction.reply({
-      content: `🔒 Locked \`${robloxUsername}\`. They will be refreshed every 3 seconds.`,
+      content: `🔒 Locked \`${robloxUsername}\`.\nRefresh Time: \`${refreshSeconds}s\`\nDuration: \`${durationMinutes} minute(s)\``,
       ephemeral: true
     });
   }
 
   if (command === "unlock") {
     const robloxUsername = interaction.options.getString("roblox_username");
-
-    unlockPlayer(robloxUsername);
+    const unlocked = unlockPlayer(robloxUsername);
 
     return interaction.reply({
-      content: `🔓 Unlocked \`${robloxUsername}\`. Refresh loop stopped.`,
+      content: unlocked
+        ? `🔓 Unlocked \`${robloxUsername}\`. Refresh loop stopped.`
+        : `⚠️ \`${robloxUsername}\` was not locked.`,
       ephemeral: true
     });
   }
@@ -198,7 +201,9 @@ Command: \`:kill ${robloxUsername}\`
 
     return interaction.reply({
       content: locked.length
-        ? `**Currently Locked Players**\n${locked.map(p => `- ${p}`).join("\n")}`
+        ? `**Currently Locked Players**\n${locked
+            .map(p => `- ${p.username} | every ${p.refreshSeconds}s | ${p.remainingMinutes} min left`)
+            .join("\n")}`
         : "No players are currently locked.",
       ephemeral: true
     });
