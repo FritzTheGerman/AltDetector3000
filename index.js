@@ -12,24 +12,58 @@ const client = new Client({
 });
 
 client.once("ready", async () => {
-  await setupDatabase();
-  await registerSlashCommands();
+  try {
+    await setupDatabase();
+    await registerSlashCommands();
 
-  console.log(`${BOT_NAME} logged in as ${client.user.tag}`);
+    console.log(`${BOT_NAME} logged in as ${client.user.tag}`);
 
-  client.user.setPresence({
-    activities: [{ name: "ER:LC + Discord for alts", type: ActivityType.Watching }],
-    status: "online"
-  });
+    client.user.setPresence({
+      activities: [{ name: "ER:LC + Discord for alts", type: ActivityType.Watching }],
+      status: "online"
+    });
 
-  trackERLCPlayers(client);
-  setInterval(() => trackERLCPlayers(client), 60000);
+    trackERLCPlayers(client);
+    setInterval(() => trackERLCPlayers(client), 60000);
 
-  startRefreshLoop();
+    startRefreshLoop();
+    console.log("AltDetector3000 fully started.");
+  } catch (error) {
+    console.error("Startup error:", error);
+  }
 });
 
-client.on("guildMemberAdd", member => handleMemberJoin(client, member));
-client.on("guildMemberRemove", member => handleMemberLeave(member));
-client.on("interactionCreate", interaction => handleInteraction(client, interaction));
+client.on("guildMemberAdd", async member => {
+  try {
+    await handleMemberJoin(client, member);
+  } catch (error) {
+    console.error("guildMemberAdd error:", error);
+  }
+});
+
+client.on("guildMemberRemove", async member => {
+  try {
+    await handleMemberLeave(member);
+  } catch (error) {
+    console.error("guildMemberRemove error:", error);
+  }
+});
+
+client.on("interactionCreate", async interaction => {
+  try {
+    await handleInteraction(client, interaction);
+  } catch (error) {
+    console.error("Interaction error:", error);
+
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply("❌ Command failed. Check Railway logs.").catch(() => {});
+    } else {
+      await interaction.reply({
+        content: "❌ Command failed. Check Railway logs.",
+        ephemeral: true
+      }).catch(() => {});
+    }
+  }
+});
 
 client.login(process.env.DISCORD_TOKEN);
