@@ -1,6 +1,5 @@
 const { google } = require("googleapis");
 const { pool } = require("./database");
-const { getLockedPlayers, fetchERLCPlayers } = require("./erlc");
 
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -220,8 +219,16 @@ async function getDashboardData() {
     LIMIT 10
   `)).rows;
 
-  const onlinePlayers = await fetchERLCPlayers().catch(() => []);
-  const lockedPlayers = getLockedPlayers();
+  let onlinePlayers = [];
+  let lockedPlayers = [];
+
+  try {
+    const erlc = require("./erlc");
+    onlinePlayers = await erlc.fetchERLCPlayers().catch(() => []);
+    lockedPlayers = erlc.getLockedPlayers();
+  } catch (error) {
+    console.log("Dashboard ER:LC data skipped:", error.message);
+  }
 
   return {
     recentCommands,
@@ -262,6 +269,7 @@ function makeDashboardValues(stats, dashboardData, currentSync) {
 
   for (let i = 0; i < 10; i++) {
     const cmd = dashboardData.recentCommands[i];
+    if (!rows[5 + i]) rows[5 + i] = ["", "", "", "", "", "", "", "", "", ""];
     rows[5 + i][3] = cmd?.command_name || "";
     rows[5 + i][4] = cmd?.username || "";
     rows[5 + i][5] = cmd?.status || "";
@@ -340,6 +348,17 @@ function makeDashboardValues(stats, dashboardData, currentSync) {
   return rows;
 }
 
+async function getSheetIdByTitle(sheets, title) {
+  const response = await sheets.spreadsheets.get({
+    spreadsheetId: GOOGLE_SHEET_ID
+  });
+
+  const sheet = response.data.sheets.find(s => s.properties.title === title);
+  if (!sheet) throw new Error(`Missing sheet tab: ${title}`);
+
+  return sheet.properties.sheetId;
+}
+
 async function updateDashboard(sheets, stats, currentSync) {
   const dashboardData = await getDashboardData();
   const values = makeDashboardValues(stats, dashboardData, currentSync);
@@ -356,6 +375,8 @@ async function updateDashboard(sheets, stats, currentSync) {
     requestBody: { values }
   });
 
+  const dashboardSheetId = await getSheetIdByTitle(sheets, "dashboard");
+
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: GOOGLE_SHEET_ID,
     requestBody: {
@@ -363,24 +384,75 @@ async function updateDashboard(sheets, stats, currentSync) {
         {
           repeatCell: {
             range: {
-              sheetId: await getSheetIdByTitle(sheets, "dashboard"),
+              sheetId: dashboardSheetId,
               startRowIndex: 0,
               endRowIndex: 1
             },
             cell: {
               userEnteredFormat: {
-                textFormat: { bold: true, fontSize: 16 },
-                backgroundColor: { red: 0.1, green: 0.1, blue: 0.1 },
-                foregroundColor: { red: 1, green: 1, blue: 1 }
+                textFormat: {
+                  bold: true,
+                  fontSize: 16,
+                  foregroundColor: { red: 1, green: 1, blue: 1 }
+                },
+                backgroundColor: { red: 0.1, green: 0.1, blue: 0.1 }
               }
             },
-            fields: "userEnteredFormat(textFormat,backgroundColor,foregroundColor)"
+            fields: "userEnteredFormat(textFormat,backgroundColor)"
+          }
+        },
+        {
+          repeatCell: {
+            range: {
+              sheetId: dashboardSheetId,
+              startRowIndex: 3,
+              endRowIndex: 5
+            },
+            cell: {
+              userEnteredFormat: {
+                textFormat: { bold: true },
+                backgroundColor: { red: 0.85, green: 0.9, blue: 1 }
+              }
+            },
+            fields: "userEnteredFormat(textFormat,backgroundColor)"
+          }
+        },
+        {
+          repeatCell: {
+            range: {
+              sheetId: dashboardSheetId,
+              startRowIndex: 14,
+              endRowIndex: 16
+            },
+            cell: {
+              userEnteredFormat: {
+                textFormat: { bold: true },
+                backgroundColor: { red: 0.9, green: 1, blue: 0.9 }
+              }
+            },
+            fields: "userEnteredFormat(textFormat,backgroundColor)"
+          }
+        },
+        {
+          repeatCell: {
+            range: {
+              sheetId: dashboardSheetId,
+              startRowIndex: 27,
+              endRowIndex: 29
+            },
+            cell: {
+              userEnteredFormat: {
+                textFormat: { bold: true },
+                backgroundColor: { red: 1, green: 0.9, blue: 0.85 }
+              }
+            },
+            fields: "userEnteredFormat(textFormat,backgroundColor)"
           }
         },
         {
           autoResizeDimensions: {
             dimensions: {
-              sheetId: await getSheetIdByTitle(sheets, "dashboard"),
+              sheetId: dashboardSheetId,
               dimension: "COLUMNS",
               startIndex: 0,
               endIndex: 10
@@ -390,7 +462,7 @@ async function updateDashboard(sheets, stats, currentSync) {
         {
           updateSheetProperties: {
             properties: {
-              sheetId: await getSheetIdByTitle(sheets, "dashboard"),
+              sheetId: dashboardSheetId,
               gridProperties: { frozenRowCount: 1 }
             },
             fields: "gridProperties.frozenRowCount"
@@ -399,17 +471,6 @@ async function updateDashboard(sheets, stats, currentSync) {
       ]
     }
   });
-}
-
-async function getSheetIdByTitle(sheets, title) {
-  const response = await sheets.spreadsheets.get({
-    spreadsheetId: GOOGLE_SHEET_ID
-  });
-
-  const sheet = response.data.sheets.find(s => s.properties.title === title);
-  if (!sheet) throw new Error(`Missing sheet tab: ${title}`);
-
-  return sheet.properties.sheetId;
 }
 
 async function syncDatabaseToGoogleSheets() {
