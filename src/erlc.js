@@ -11,6 +11,10 @@ const { syncDatabaseToGoogleSheets } = require("./sheets");
 
 const lockedPlayers = new Map();
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function nowISO() {
   return new Date().toISOString();
 }
@@ -41,9 +45,10 @@ function lockPlayer(username, refreshSeconds, durationMinutes, lockedBy = "Staff
     const timeRemaining = formatRemainingTime(expiresAt);
 
     await runERLCCommand(`:jail ${username}`).catch(() => {});
+    await sleep(1200);
 
     await runERLCCommand(
-      `:pm ${username} You have been locked by ${lockedBy}. You will be unlocked in ${timeRemaining}.`
+      `:pm ${username} "You have been locked by ${lockedBy}. You will be unlocked in ${timeRemaining}."`
     ).catch(() => {});
   }
 
@@ -60,7 +65,8 @@ function lockPlayer(username, refreshSeconds, durationMinutes, lockedBy = "Staff
       lockedPlayers.delete(key);
 
       await runERLCCommand(`:unjail ${username}`).catch(() => {});
-      await runERLCCommand(`:pm ${username} You have been unlocked.`).catch(() => {});
+      await sleep(1200);
+      await runERLCCommand(`:pm ${username} "You have been unlocked."`).catch(() => {});
       return;
     }
 
@@ -337,6 +343,7 @@ module.exports = {
   unlockPlayer,
   getLockedPlayers,
   startRefreshLoop,
+  sleep,
   daysOld,
   nowISO
 };
