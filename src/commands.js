@@ -15,6 +15,24 @@ async function registerSlashCommands() {
       ),
 
     new SlashCommandBuilder()
+      .setName("lock")
+      .setDescription("Lock a player by refreshing them every 3 seconds")
+      .addStringOption(option =>
+        option.setName("roblox_username").setDescription("Roblox username to lock").setRequired(true)
+      ),
+
+    new SlashCommandBuilder()
+      .setName("unlock")
+      .setDescription("Unlock a player and stop refreshing them")
+      .addStringOption(option =>
+        option.setName("roblox_username").setDescription("Roblox username to unlock").setRequired(true)
+      ),
+
+    new SlashCommandBuilder()
+      .setName("locks")
+      .setDescription("Show currently locked players"),
+
+    new SlashCommandBuilder()
       .setName("testalert")
       .setDescription("Send a test DM alert")
       .addUserOption(option =>
