@@ -7,6 +7,7 @@ const {
 } = require("./config");
 const { sendStaffAlert } = require("./alerts");
 const { robloxRisk } = require("./risk");
+const { syncDatabaseToGoogleSheets } = require("./sheets");
 
 const lockedPlayers = new Map();
 
@@ -217,6 +218,7 @@ async function fetchERLCPlayers() {
 }
 
 async function trackERLCPlayers(client) {
+  let didUpdate = false;
   const players = await fetchERLCPlayers();
 
   for (const player of players) {
@@ -255,6 +257,8 @@ async function trackERLCPlayers(client) {
       ]
     );
 
+    didUpdate = true;
+
     const { score, reasons } = await robloxRisk(player, robloxInfo);
 
     const lastAlerted = existing.rows[0]?.last_alerted_at;
@@ -283,6 +287,16 @@ Manual review.
         `UPDATE roblox_users SET last_alerted_at = $1 WHERE roblox_id = $2`,
         [nowISO(), robloxId]
       );
+
+      didUpdate = true;
+    }
+  }
+
+  if (didUpdate) {
+    try {
+      await syncDatabaseToGoogleSheets();
+    } catch (error) {
+      console.log("Auto ERLC sheet sync failed:", error.message);
     }
   }
 }
