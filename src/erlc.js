@@ -36,7 +36,7 @@ function startRefreshLoop() {
     for (const username of lockedPlayers) {
       await runERLCCommand(`:refresh ${username}`);
     }
-  }, 3000);
+  }, 1000);
 }
 
 function parseERLCPlayer(player) {
