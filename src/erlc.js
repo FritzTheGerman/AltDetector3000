@@ -45,7 +45,7 @@ function lockPlayer(username, refreshSeconds, durationMinutes, lockedBy = "Staff
     const timeRemaining = formatRemainingTime(expiresAt);
 
     await runERLCCommand(`:jail ${username}`).catch(() => {});
-    await sleep(1200);
+    await sleep(400);
 
     await runERLCCommand(
       `:pm ${username} "You have been locked by ${lockedBy}. You will be unlocked in ${timeRemaining}."`
