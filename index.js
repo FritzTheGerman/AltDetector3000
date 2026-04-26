@@ -29,8 +29,10 @@ client.once("ready", async () => {
 
     startRefreshLoop();
 
-    syncDatabaseToGoogleSheets();
-    setInterval(syncDatabaseToGoogleSheets, 300000);
+    // Sync once on startup only. Real-time sync happens in handlers/ERLC updates.
+    syncDatabaseToGoogleSheets().catch(err =>
+      console.error("Startup sheet sync failed:", err.message)
+    );
 
     console.log("AltDetector3000 fully started.");
   } catch (error) {
@@ -64,8 +66,7 @@ client.on("interactionCreate", async interaction => {
       await interaction.editReply("❌ Command failed. Check Railway logs.").catch(() => {});
     } else {
       await interaction.reply({
-        content: "❌ Command failed. Check Railway logs.",
-        ephemeral: true
+        content: "❌ Command failed. Check Railway logs."
       }).catch(() => {});
     }
   }
