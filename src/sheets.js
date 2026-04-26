@@ -269,7 +269,6 @@ function makeDashboardValues(stats, dashboardData, currentSync) {
 
   for (let i = 0; i < 10; i++) {
     const cmd = dashboardData.recentCommands[i];
-    if (!rows[5 + i]) rows[5 + i] = ["", "", "", "", "", "", "", "", "", ""];
     rows[5 + i][3] = cmd?.command_name || "";
     rows[5 + i][4] = cmd?.username || "";
     rows[5 + i][5] = cmd?.status || "";
@@ -375,81 +374,12 @@ async function updateDashboard(sheets, stats, currentSync) {
     requestBody: { values }
   });
 
-const dashboardSheetId = await getSheetIdByTitle(sheets, "dashboard");
+  const dashboardSheetId = await getSheetIdByTitle(sheets, "dashboard");
 
-await sheets.spreadsheets.batchUpdate({
-  spreadsheetId: GOOGLE_SHEET_ID,
-  requestBody: {
-    requests: [
-      {
-        autoResizeDimensions: {
-          dimensions: {
-            sheetId: dashboardSheetId,
-            dimension: "COLUMNS",
-            startIndex: 0,
-            endIndex: 10
-          }
-        }
-      },
-      {
-        updateSheetProperties: {
-          properties: {
-            sheetId: dashboardSheetId,
-            gridProperties: { frozenRowCount: 1 }
-          },
-          fields: "gridProperties.frozenRowCount"
-        }
-      }
-    ]
-  }
-});
-          repeatCell: {
-            range: {
-              sheetId: dashboardSheetId,
-              startRowIndex: 3,
-              endRowIndex: 5
-            },
-            cell: {
-              userEnteredFormat: {
-                textFormat: { bold: true },
-                backgroundColor: { red: 0.85, green: 0.9, blue: 1 }
-              }
-            },
-            fields: "userEnteredFormat(textFormat,backgroundColor)"
-          }
-        },
-        {
-          repeatCell: {
-            range: {
-              sheetId: dashboardSheetId,
-              startRowIndex: 14,
-              endRowIndex: 16
-            },
-            cell: {
-              userEnteredFormat: {
-                textFormat: { bold: true },
-                backgroundColor: { red: 0.9, green: 1, blue: 0.9 }
-              }
-            },
-            fields: "userEnteredFormat(textFormat,backgroundColor)"
-          }
-        },
-        {
-          repeatCell: {
-            range: {
-              sheetId: dashboardSheetId,
-              startRowIndex: 27,
-              endRowIndex: 29
-            },
-            cell: {
-              userEnteredFormat: {
-                textFormat: { bold: true },
-                backgroundColor: { red: 1, green: 0.9, blue: 0.85 }
-              }
-            },
-            fields: "userEnteredFormat(textFormat,backgroundColor)"
-          }
-        },
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: GOOGLE_SHEET_ID,
+    requestBody: {
+      requests: [
         {
           autoResizeDimensions: {
             dimensions: {
