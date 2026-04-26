@@ -129,14 +129,13 @@ async function runInteraction(client, interaction) {
   const command = interaction.commandName;
 
   if (!isStaff(interaction.user.id)) {
-  const ownerPing = OWNER_USER_ID ? `<@${OWNER_USER_ID}>` : "Owner not set";
+    const ownerPing = OWNER_USER_ID ? `<@${OWNER_USER_ID}>` : "Owner not set";
 
-  return replyEmbed(
-    interaction,
-    "Unauthorized",
-    `${interaction.user} tried to use \`/${interaction.commandName}\` but is not authorized.\n\nOwner Alert: ${ownerPing}`,
-    0xff5555,
-    false // 👈 THIS is the important part (makes it public)
+    return replyEmbed(
+      interaction,
+      "Unauthorized Command Attempt",
+      `${interaction.user} tried to use \`/${interaction.commandName}\` but is not authorized.\n\nOwner Alert: ${ownerPing}`,
+      0xff5555
     );
   }
 
@@ -153,8 +152,8 @@ async function runInteraction(client, interaction) {
 \`/help\` - Show commands
 \`/erlctest\` - Test ER:LC API
 \`/kill roblox_username:Name\` - Kill player in ER:LC
-\`/lock refresh_seconds:5 duration_minutes:10 roblox_username:Name\` - Refresh-lock player
-\`/unlock roblox_username:Name\` - Stop refresh-lock
+\`/lock refresh_seconds:5 duration_minutes:10 roblox_username:Name\` - Jail-lock player and PM them
+\`/unlock roblox_username:Name\` - Stop lock and unjail player
 \`/locks\` - Show locked players
 \`/syncsheets\` - Sync database to Google Sheets
 \`/testalert\` - Test alerts
@@ -233,12 +232,21 @@ ${samplePlayers}
     const durationMinutes = interaction.options.getInteger("duration_minutes");
     const robloxUsername = interaction.options.getString("roblox_username");
 
-    lockPlayer(robloxUsername, refreshSeconds, durationMinutes);
+    lockPlayer(
+      robloxUsername,
+      refreshSeconds,
+      durationMinutes,
+      interaction.user.tag
+    );
 
     return replyEmbed(
       interaction,
       "Player Locked",
-      `Player: \`${robloxUsername}\`\nRefresh Time: \`${refreshSeconds}s\`\nDuration: \`${durationMinutes} minute(s)\``
+      `Player: \`${robloxUsername}\`
+Action: \`:jail\`
+PM Message: \`You have been locked by ${interaction.user.tag}. You will be unlocked in ${durationMinutes} minute(s).\`
+Repeat Time: \`${refreshSeconds}s\`
+Duration: \`${durationMinutes} minute(s)\``
     );
   }
 
@@ -246,12 +254,20 @@ ${samplePlayers}
     const robloxUsername = interaction.options.getString("roblox_username");
     const unlocked = unlockPlayer(robloxUsername);
 
+    if (unlocked) {
+      await runERLCCommand(`:unjail ${robloxUsername}`).catch(() => {});
+      await runERLCCommand(`:pm ${robloxUsername} You have been unlocked.`).catch(() => {});
+    }
+
     return replyEmbed(
       interaction,
       unlocked ? "Player Unlocked" : "Player Was Not Locked",
       unlocked
-        ? `Player: \`${robloxUsername}\`\nRefresh loop stopped.`
-        : `Player: \`${robloxUsername}\`\nNo active lock found.`,
+        ? `Player: \`${robloxUsername}\`
+Action: \`:unjail\`
+Status: Lock stopped.`
+        : `Player: \`${robloxUsername}\`
+No active lock found.`,
       unlocked ? BOT_COLOR : 0xffaa00
     );
   }
@@ -263,7 +279,7 @@ ${samplePlayers}
       interaction,
       "Currently Locked Players",
       locked.length
-        ? locked.map(p => `- \`${p.username}\` | every \`${p.refreshSeconds}s\` | \`${p.remainingMinutes} min\` left`).join("\n")
+        ? locked.map(p => `- \`${p.username}\` | every \`${p.refreshSeconds}s\` | \`${p.remainingMinutes} min\` left | locked by \`${p.lockedBy}\``).join("\n")
         : "No players are currently locked."
     );
   }
