@@ -126,6 +126,34 @@ async function getSyncStats(previousSync) {
   };
 }
 
+async function updateDashboard(sheets, stats, currentSync) {
+  const values = [
+    ["Metric", "Value"],
+    ["Discord Users", stats.discordTotal],
+    ["Roblox Users", stats.robloxTotal],
+    ["Linked Accounts", stats.linkedTotal],
+    ["Commands Logged", stats.commandTotal],
+    ["New Discord Users Since Last Sync", stats.discordNew],
+    ["New Roblox Users Since Last Sync", stats.robloxNew],
+    ["New Commands Since Last Sync", stats.commandNew],
+    ["Updated Discord Users Since Last Sync", stats.discordUpdated],
+    ["Updated Roblox Users Since Last Sync", stats.robloxUpdated],
+    ["Last Sync", currentSync.toISOString()]
+  ];
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: GOOGLE_SHEET_ID,
+    range: `dashboard!A:Z`
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: GOOGLE_SHEET_ID,
+    range: `dashboard!A1`,
+    valueInputOption: "RAW",
+    requestBody: { values }
+  });
+}
+
 async function syncDatabaseToGoogleSheets() {
   if (!SYNC_GOOGLE_SHEETS) {
     return {
@@ -189,6 +217,8 @@ async function syncDatabaseToGoogleSheets() {
   ]);
 
   const stats = await getSyncStats(previousSync);
+
+  await updateDashboard(sheets, stats, currentSync);
   await setLastSheetsSyncTime(currentSync);
 
   console.log("Google Sheets sync complete.");
