@@ -10,6 +10,9 @@ const {
   parseERLCPlayer,
   getRobloxUserInfo,
   runERLCCommand,
+  lockPlayer,
+  unlockPlayer,
+  getLockedPlayers,
   nowISO
 } = require("./erlc");
 
@@ -93,6 +96,9 @@ async function handleInteraction(client, interaction) {
 \`/help\`
 \`/erlctest\`
 \`/kill roblox_username:Name\`
+\`/lock roblox_username:Name\`
+\`/unlock roblox_username:Name\`
+\`/locks\`
 \`/testalert\`
 \`/alerts\`
 \`/altcheck user:@user\`
@@ -163,6 +169,39 @@ Error: \`${JSON.stringify(result.error)}\`
 Player: \`${robloxUsername}\`
 Command: \`:kill ${robloxUsername}\`
 `);
+  }
+
+  if (command === "lock") {
+    const robloxUsername = interaction.options.getString("roblox_username");
+
+    lockPlayer(robloxUsername);
+
+    return interaction.reply({
+      content: `🔒 Locked \`${robloxUsername}\`. They will be refreshed every 3 seconds.`,
+      ephemeral: true
+    });
+  }
+
+  if (command === "unlock") {
+    const robloxUsername = interaction.options.getString("roblox_username");
+
+    unlockPlayer(robloxUsername);
+
+    return interaction.reply({
+      content: `🔓 Unlocked \`${robloxUsername}\`. Refresh loop stopped.`,
+      ephemeral: true
+    });
+  }
+
+  if (command === "locks") {
+    const locked = getLockedPlayers();
+
+    return interaction.reply({
+      content: locked.length
+        ? `**Currently Locked Players**\n${locked.map(p => `- ${p}`).join("\n")}`
+        : "No players are currently locked.",
+      ephemeral: true
+    });
   }
 
   if (command === "testalert") {
