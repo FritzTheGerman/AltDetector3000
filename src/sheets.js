@@ -267,7 +267,7 @@ function makeDashboardValues(stats, dashboardData, currentSync) {
   rows.push(["New Roblox Today", stats.robloxToday, "", "", "", "", "Active Locked Players", dashboardData.lockedPlayers.length, "", ""]);
   rows.push(["Commands Today", stats.commandsToday, "", "", "", "", "ER:LC Players Online", dashboardData.onlinePlayers.length, "", ""]);
 
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 7; i++) {
     const cmd = dashboardData.recentCommands[i];
     rows[5 + i][3] = cmd?.command_name || "";
     rows[5 + i][4] = cmd?.username || "";
