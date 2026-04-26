@@ -8,6 +8,8 @@ const {
 const { sendStaffAlert } = require("./alerts");
 const { robloxRisk } = require("./risk");
 
+const lockedPlayers = new Set();
+
 function nowISO() {
   return new Date().toISOString();
 }
@@ -15,6 +17,26 @@ function nowISO() {
 function daysOld(date) {
   if (!date) return 9999;
   return Math.floor((Date.now() - new Date(date).getTime()) / 86400000);
+}
+
+function lockPlayer(username) {
+  lockedPlayers.add(String(username).toLowerCase());
+}
+
+function unlockPlayer(username) {
+  lockedPlayers.delete(String(username).toLowerCase());
+}
+
+function getLockedPlayers() {
+  return Array.from(lockedPlayers);
+}
+
+function startRefreshLoop() {
+  setInterval(async () => {
+    for (const username of lockedPlayers) {
+      await runERLCCommand(`:refresh ${username}`);
+    }
+  }, 3000);
 }
 
 function parseERLCPlayer(player) {
@@ -234,6 +256,10 @@ module.exports = {
   fetchERLCServerInfo,
   fetchERLCPlayers,
   trackERLCPlayers,
+  lockPlayer,
+  unlockPlayer,
+  getLockedPlayers,
+  startRefreshLoop,
   daysOld,
   nowISO
 };
