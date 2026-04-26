@@ -4,7 +4,9 @@ const { DISCORD_TOKEN, CLIENT_ID, GUILD_ID } = require("./config");
 async function registerSlashCommands() {
   const commands = [
     new SlashCommandBuilder().setName("ping").setDescription("Check if AltDetector3000 is online"),
+
     new SlashCommandBuilder().setName("help").setDescription("Show AltDetector3000 commands"),
+
     new SlashCommandBuilder().setName("erlctest").setDescription("Test ER:LC API connection and show server info"),
 
     new SlashCommandBuilder()
@@ -16,25 +18,39 @@ async function registerSlashCommands() {
 
     new SlashCommandBuilder()
       .setName("lock")
-      .setDescription("Refresh-lock a player for a set amount of time")
+      .setDescription("Jail-lock a player for a set amount of time")
       .addIntegerOption(option =>
-        option.setName("refresh_seconds").setDescription("Refresh interval in seconds").setRequired(true).setMinValue(3).setMaxValue(60)
+        option
+          .setName("refresh_seconds")
+          .setDescription("How often to re-jail and PM them, in seconds. Minimum 3.")
+          .setRequired(true)
+          .setMinValue(3)
+          .setMaxValue(60)
       )
       .addIntegerOption(option =>
-        option.setName("duration_minutes").setDescription("Duration in minutes").setRequired(true).setMinValue(1).setMaxValue(60)
+        option
+          .setName("duration_minutes")
+          .setDescription("Duration in minutes")
+          .setRequired(true)
+          .setMinValue(1)
+          .setMaxValue(60)
       )
       .addStringOption(option =>
-        option.setName("roblox_username").setDescription("Roblox username").setRequired(true)
+        option
+          .setName("roblox_username")
+          .setDescription("Roblox username")
+          .setRequired(true)
       ),
 
     new SlashCommandBuilder()
       .setName("unlock")
-      .setDescription("Unlock a player")
+      .setDescription("Unlock a jailed player")
       .addStringOption(option =>
         option.setName("roblox_username").setDescription("Roblox username").setRequired(true)
       ),
 
     new SlashCommandBuilder().setName("locks").setDescription("Show locked players"),
+
     new SlashCommandBuilder().setName("syncsheets").setDescription("Manually sync Postgres database to Google Sheets"),
 
     new SlashCommandBuilder()
